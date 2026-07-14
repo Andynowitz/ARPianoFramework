@@ -1,13 +1,14 @@
 # .gitignore 
 # This file should be placed at the root of your Unity project directory
 ## Unity directories
-/[Ll]ibrary/
-/[Tt]emp/
-/[Oo]bj/
-/[Bb]uild/
-/[Bb]uilds/
-/[Ll]ogs/
-/[Uu]ser[Ss]ettings/
+/framework/ARPIANO/[Ll]ibrary/
+/framework/ARPIANO/[Tt]emp/
+/framework/ARPIANO/[Oo]bj/
+/framework/ARPIANO/[Bb]uild/
+/framework/ARPIANO/[Bb]uilds/
+/framework/ARPIANO/[Ll]ogs/
+/framework/ARPIANO/[Uu]ser[Ss]ettings/
+/framework/ARPIANO/[Mm]emoryCaptures/
 /Recordings/
 # MemoryCaptures can get excessive in size.
 # They also could contain extremely sensitive data

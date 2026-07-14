@@ -1,0 +1,8 @@
+// INoteSource.cs
+// Purpose: Defines the contract for any component that can provide notes to the ARPIANO system.
+
+public interface INoteSource
+{
+    void StartPlayback();
+    void StopPlayback();
+}
