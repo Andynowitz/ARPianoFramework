@@ -1,24 +1,32 @@
 // Lesson.cs
 // Purpose: Represents a musical lesson, which consists of a sequence of piano notes and their associated metadata.
 
-namespace ARPIANO.Models
+using System.Collections.Generic;
+
+namespace ARPIANO.Scripts.Models
 {
     public class Lesson
     {
         // Name of the lesson.
-        public string Name { get; private set; }
+        public string Name { get; set; }
 
         // Author of the lesson.
-        public string Author { get; private set; }
+        public string Author { get; set; }
 
         // Tempo of the lesson, represented as a string (e.g., "120 BPM").
-        public string Tempo { get; private set; }
+        public int BPM { get;set; }
 
         // Description of the lesson.
-        public string Description { get; private set; }
+        public string Description { get; set; }
 
         // List of piano notes that make up the lesson.
-        public List<PianoNote> Notes { get; private set; }
+        public List<PianoNote> Notes { get; set; }
+
+        // Numerator of the time signature (e.g., 4 for "4/4").
+        public int TimeSignatureNumerator { get; set; }
+
+        // Denominator of the time signature (e.g., 4 for "4/4").
+        public int TimeSignatureDenominator { get; set; }
 
         // Add a note to the List of notes in the lesson.
         public void AddNote(PianoNote note)
@@ -57,5 +65,11 @@ namespace ARPIANO.Models
             return $"{Name} ({Notes.Count} notes, {GetDuration():F2}s)";
         }
 
+        // Constructor to initialize the Notes list.
+        public Lesson()
+        {
+            Notes = new List<PianoNote>();
+        }
+        
     }
 }

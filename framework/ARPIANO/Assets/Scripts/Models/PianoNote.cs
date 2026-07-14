@@ -2,25 +2,25 @@
 // Purpose: Represents a single piano note with its properties and behaviors.
 // This model is independent of the original input source (Midi file, Midi Keyboard Input or another format)
 
-namespace ARPIANO.Models
+namespace ARPIANO.Scripts.Models
 {
     public class PianoNote
     {
         // MIDI note number (21-108 for a standard 88-key piano).
-        public int MidiNumber { get; private set; }
+        public int MidiNumber { get; set; }
 
         // Time in seconds when the note starts playing.
-        public float StartTime { get; private set; } // Time in seconds when the note starts playing.
+        public float StartTime { get; set; } // Time in seconds when the note starts playing.
 
         // Time in seconds when the note starts playing.
-        public float Duration { get; private set; }
+        public float Duration { get; set; }
 
         // Indicates whether the note is currently active (being played).
-        public bool IsActive { get; private set; }
+        public bool IsActive { get; set; }
 
         // Velocity of the note (0-127), representing how hard the note is played.
         // can be use to adjust Beam brightness or other visual/audio effects in the ARPIANO system.
-        public int velocity { get; private set; } 
+        public int Velocity { get; set; } 
 
         // Time in seconds when the note ends playing, calculated as StartTime + Duration.
         public float EndTime => StartTime + Duration; 

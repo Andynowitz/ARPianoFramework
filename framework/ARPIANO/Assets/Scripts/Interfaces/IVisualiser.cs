@@ -1,7 +1,7 @@
 // IVisualiser.cs
 // Purpose: Defines the contract for any component that can visualize notes in the ARPIANO system
 
-using ARPIANO.Models;
+using ARPIANO.Scripts.Models;
 
 public interface IVisualiser
 {

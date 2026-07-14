@@ -60,8 +60,8 @@ The project will be developed incrementally. Every milestone should produce a wo
 
 ## Milestone 2 – MIDI Integration
 
-- [ ] Import DryWetMIDI
-- [ ] Parse MIDI files
+- [x] Import DryWetMIDI
+- [x] Parse MIDI files
 - [ ] Convert MIDI into internal note objects
 - [ ] Print parsed notes for debugging
 
