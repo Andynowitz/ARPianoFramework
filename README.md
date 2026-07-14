@@ -20,28 +20,8 @@ The framework is intended as a research and development platform for immersive p
 
 ## Planned Architecture 
 
-Lesson Source
-(MIDI, Live MIDI, ...)
-        │
-        v
- Lesson Parser
-        │
-        v
- Internal Lesson Model
-        │
-        v
-    Event System
-        │
- ┌──────┼───────────┐
- v      v           v
-Beam  Sheet Music  Hand Animation
-        │
-        ▼
- Display Backend
-(Desktop / MR / Projector)
-        │
-        ▼
- Piano Tracking
+
+![Description](documentation/images/ArchicetcureMockup.png)
 
 The framework is designed to be modular. Every major component should be replaceable without affecting the remaining system.
 
