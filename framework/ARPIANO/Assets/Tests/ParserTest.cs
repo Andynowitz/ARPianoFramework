@@ -16,6 +16,11 @@ namespace ARPIANO.Tests
 
             Lesson lesson = parser.ParseMIDIFile(path);
 
+            foreach (var note in lesson.Notes)
+            {
+                Debug.Log(note.ToString());
+            }
+
             Debug.Assert(lesson != null);
             Debug.Assert(lesson.Name == "0_row row_3_5");
             Debug.Assert(lesson.BPM > 0);

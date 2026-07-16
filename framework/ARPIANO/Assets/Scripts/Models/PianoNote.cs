@@ -6,6 +6,18 @@ namespace ARPIANO.Scripts.Models
 {
     public class PianoNote
     {
+        public PianoNote()
+        {
+        }
+
+        public PianoNote(int midiNumber, int velocity, float startTime, float duration)
+        {
+            MidiNumber = midiNumber;
+            Velocity = velocity;
+            StartTime = startTime;
+            Duration = duration;
+        }
+
         // MIDI note number (21-108 for a standard 88-key piano).
         public int MidiNumber { get; set; }
 
@@ -15,8 +27,9 @@ namespace ARPIANO.Scripts.Models
         // Time in seconds when the note starts playing.
         public float Duration { get; set; }
 
-        // Indicates whether the note is currently active (being played).
-        public bool IsActive { get; set; }
+        // Runtime state used by the lesson player to avoid firing events multiple times.
+        public bool HasStarted { get; set; }
+        public bool HasFinished { get; set; }
 
         // Velocity of the note (0-127), representing how hard the note is played.
         // can be use to adjust Beam brightness or other visual/audio effects in the ARPIANO system.
@@ -41,9 +54,11 @@ namespace ARPIANO.Scripts.Models
 
         public override string ToString()
         {
-            return $"{GetNoteName()} (MIDI {MidiNumber}) | Start: {StartTime:F2}s | Duration: {Duration:F2}s";
+            return  $"{GetNoteName()} | MIDI: {MidiNumber} | " +
+                    $"Start: {StartTime:F2}s | " +
+                    $"Duration: {Duration:F2}s | " +
+                    $"Velocity: {Velocity}";
+
         }
-
-
     }
 }

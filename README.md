@@ -31,53 +31,89 @@ The framework is designed to be modular. Every major component should be replace
 The project will be developed incrementally. Every milestone should produce a working prototype before moving to the next one.
 
 
-## Milestone 1 – Project Foundation
+# Milestone 1 – Project Foundation
 
-- [x] Create Unity project structure
-- [x] Organize folders
+- [x] Create Unity project
+- [x] Design folder structure
 - [x] Define interfaces
-- [x] Create core architecture
+- [x] Create core models (`PianoNote`, `Lesson`)
+- [x] Set up Git repository
+- [x] Create modular project architecture
 
-## Milestone 2 – MIDI Integration
 
-- [x] Import DryWetMIDI
+# Milestone 2 – MIDI & Lesson System
+
+- [x] Integrate DryWetMIDI
 - [x] Parse MIDI files
-- [ ] Convert MIDI into internal note objects
-- [ ] Print parsed notes for debugging
+- [x] Convert MIDI notes into `PianoNote`
+- [x] Create `Lesson` objects
+- [x] Print parsed notes for debugging
 
-## Milestone 3 – Virtual Piano
 
-- [ ] Create virtual keyboard
-- [ ] Map MIDI notes to piano keys
+# Milestone 3 – Lesson Playback
+
+- [x] Create `LessonPlayer`
+- [x] Internal playback timer
+- [x] Trigger `NoteStarted`
+- [x] Trigger `NoteStopped`
+- [x] Pause / Resume
+- [x] Stop playback
+
+
+# Milestone 4 – Virtual Piano
+
+- [ ] Create 88-key virtual keyboard
+- [ ] Create `PianoKey` component
+- [ ] Map MIDI notes (21–108) to keys
+- [ ] Subscribe to `LessonPlayer`
 - [ ] Highlight pressed keys
+- [ ] Release highlighted keys
 
 
-## Milestone 4 – Visualization
+# Milestone 5 – Visualization
 
 - [ ] Create Beam Visualizer
-- [ ] Spawn beams for active notes
-- [ ] Synchronize note timing
-- [ ] Support multiple simultaneous notes
+- [ ] Spawn beams on `NoteStarted`
+- [ ] Remove beams on `NoteStopped`
+- [ ] Synchronize beam timing
+- [ ] Support chords (multiple simultaneous notes)
+- [ ] Allow multiple visualization modules
 
-## Milestone 5 – Piano Tracking
 
-- [ ] Detect piano from an image
-- [ ] Align virtual keyboard
-- [ ] Replace static image with webcam input
-- [ ] Investigate Vuforia/OpenCV integration
+# Milestone 6 – Piano Tracking
 
-## Milestone 6 – Modular Framework
+### Phase 1 – Manual Alignment
+- [ ] Display a static piano image
+- [ ] Overlay the virtual piano
+- [ ] Manual calibration
 
-- [ ] Introduce interchangeable visualizers
-- [ ] Implement event-driven architecture
-- [ ] Separate lesson, tracking, and visualization modules
+### Phase 2 – Marker-Based Tracking
+- [ ] Integrate Vuforia
+- [ ] Track marker
+- [ ] Automatically align virtual piano
 
-## Milestone 7 – Mixed Reality Support
+### Phase 3 – Markerless Tracking
+- [ ] Replace marker with keyboard detection
+- [ ] Investigate OpenCV
+- [ ] Support static webcam calibration
+- [ ] Prepare interface for future tracking algorithms
 
-- [ ] Integrate XR support
-- [ ] Test on Meta Quest
-- [ ] Verify modular display pipeline
 
+# Milestone 7 – Framework Modularity
+
+- [ ] Create interchangeable tracker modules
+- [ ] Create interchangeable visualizers
+- [ ] Introduce event-driven communication
+- [ ] Separate Lesson, Tracking and Visualization systems
+- [ ] Document framework architecture
+
+
+# Milestone 8 – Mixed Reality
+
+- [ ] Integrate Meta XR SDK
+- [ ] Deploy to Meta Quest
+- [ ] Verify display abstraction
+- [ ] Test complete MR pipeline
 
 
 # Immediate Tasks
