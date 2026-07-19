@@ -62,12 +62,12 @@ The project will be developed incrementally. Every milestone should produce a wo
 
 # Milestone 4 – Virtual Piano
 
-- [ ] Create 88-key virtual keyboard
-- [ ] Create `PianoKey` component
-- [ ] Map MIDI notes (21–108) to keys
-- [ ] Subscribe to `LessonPlayer`
-- [ ] Highlight pressed keys
-- [ ] Release highlighted keys
+- [x] Create 88-key virtual keyboard
+- [x] Create `PianoKey` component
+- [x] Map MIDI notes (21–108) to keys
+- [x] Subscribe to `LessonPlayer`
+- [x] Highlight pressed keys
+- [x] Release highlighted keys
 
 
 # Milestone 5 – Visualization

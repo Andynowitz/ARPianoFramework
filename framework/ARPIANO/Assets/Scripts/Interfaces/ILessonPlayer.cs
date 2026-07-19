@@ -14,7 +14,7 @@ public interface ILessonPlayer
 
     void Stop();
 
-    float CurrentTime { get; }
+    float GetCurrentTime { get; }
 
     event Action<PianoNote> NoteStarted; // Event triggered when a note starts playing.
     event Action<PianoNote> NoteStopped; // Event triggered when a note stops playing.

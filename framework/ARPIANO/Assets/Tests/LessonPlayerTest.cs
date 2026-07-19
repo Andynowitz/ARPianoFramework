@@ -41,11 +41,11 @@ public class LessonPlayerTest : MonoBehaviour
 
     private void OnNoteStarted(PianoNote note)
     {
-        Debug.Log($"START: {note.GetNoteName()} at {lessonPlayer.CurrentTime:F2}s");
+        Debug.Log($"START: {note.GetNoteNames()} at {lessonPlayer.GetCurrentTime:F2}s");
     }
 
     private void OnNoteStopped(PianoNote note)
     {
-        Debug.Log($"STOP : {note.GetNoteName()} at {lessonPlayer.CurrentTime:F2}s");
+        Debug.Log($"STOP : {note.GetNoteNames()} at {lessonPlayer.GetCurrentTime:F2}s");
     }
 }

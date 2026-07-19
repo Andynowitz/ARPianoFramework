@@ -38,7 +38,7 @@ namespace ARPIANO.Scripts.Models
         // Time in seconds when the note ends playing, calculated as StartTime + Duration.
         public float EndTime => StartTime + Duration; 
 
-        public string GetNoteName()
+        public static string GetNoteName(int midiNumber)
         {
             string[] noteNames =
             {
@@ -46,10 +46,20 @@ namespace ARPIANO.Scripts.Models
                 "F#", "G", "G#", "A", "A#", "B"
             };
 
-            int octave = (MidiNumber / 12) - 1;
-            string note = noteNames[MidiNumber % 12];
+            int octave = (midiNumber / 12) - 1;
+            string note = noteNames[midiNumber % 12];
 
             return $"{note}{octave}";
+        }
+
+        public string GetNoteName()
+        {
+            return GetNoteName(MidiNumber);
+        }
+
+        public string GetNoteNames()
+        {
+            return GetNoteName(MidiNumber);
         }
 
         public override string ToString()

@@ -6,6 +6,7 @@
 using System.Collections;
 using UnityEngine;
 using ARPIANO.Scripts.Models;
+using ARPIANO.Scripts.Piano;
 using System;
 
 namespace ARPIANO.Scripts.Lessons
@@ -15,11 +16,23 @@ namespace ARPIANO.Scripts.Lessons
         private Lesson currentLesson;
         private float currentTime;
         private bool isPlaying;
+        private VirtualPiano piano;
 
         public event Action<PianoNote> NoteStarted;
         public event Action<PianoNote> NoteStopped;
 
-        public float CurrentTime => currentTime;
+        public float GetCurrentTime => currentTime;
+
+        private LessonPlayer lessonPlayer;
+
+        private void Awake()
+        {
+            piano = FindAnyObjectByType<VirtualPiano>();
+            if (piano == null)
+            {
+                Debug.LogError("LessonPlayer requires a VirtualPiano instance in the scene.");
+            }
+        }
 
         public void LoadLesson(Lesson lesson)
         {

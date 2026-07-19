@@ -3,9 +3,11 @@
 
 using ARPIANO.Scripts.Models;
 
-public interface IVisualiser
+namespace ARPIANO.Scripts.Visualizers
 {
-    void PianoNoteStarted(PianoNote note);
-
-    void PianoNoteStopped(PianoNote note);
+    public interface IVisualizer
+    {
+        void NoteStarted(PianoNote note);
+        void NoteStopped(PianoNote note);
+    }
 }
