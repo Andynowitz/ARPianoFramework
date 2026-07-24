@@ -1,5 +1,8 @@
 # ARPianoFramework
 
+## COMMITING
+git push origin andy/setup
+git push github andy/setup
 
 ## Overview
 
