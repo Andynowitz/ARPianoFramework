@@ -301,7 +301,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &359806361
+--- !u!1 &383159190
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -309,43 +309,44 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 359806363}
-  - component: {fileID: 359806364}
+  - component: {fileID: 383159192}
+  - component: {fileID: 383159191}
   m_Layer: 0
-  m_Name: GameObject
+  m_Name: OpenCVKeyboardTracker
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &359806363
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 359806361}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -74.05121, y: 0, z: 80.31345}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &359806364
+--- !u!114 &383159191
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 359806361}
+  m_GameObject: {fileID: 383159190}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 03a3b4c1dbc403c458e632508f94632f, type: 3}
+  m_Script: {fileID: 11500000, guid: 8a092e9f90ae14d4bb63b5502c0df45a, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::VirtualPianoTest
-  lessonPlayer: {fileID: 0}
+  m_EditorClassIdentifier: Assembly-CSharp::ARPIANO.Scripts.Tracking.OpenCVKeyboardTracker
+  pianoImage: {fileID: 2800000, guid: e17512e266dae0d4ebf4c3a5cc69b1b7, type: 3}
+  pianoRenderer: {fileID: 663577687}
+--- !u!4 &383159192
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 383159190}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -54.77943, y: 0, z: 77.24306}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -688,6 +689,6 @@ SceneRoots:
   - {fileID: 410087041}
   - {fileID: 832575519}
   - {fileID: 896754337}
-  - {fileID: 359806363}
   - {fileID: 332425687}
   - {fileID: 663577689}
+  - {fileID: 383159192}
