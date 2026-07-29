@@ -75,31 +75,49 @@ The project will be developed incrementally. Every milestone should produce a wo
 
 # Milestone 5 – Visualization
 
-- [ ] Create Beam Visualizer
-- [ ] Spawn beams on `NoteStarted`
-- [ ] Remove beams on `NoteStopped`
+- [x] Create Beam Visualizer
+- [x] Spawn beams on `NoteStarted`
+- [x] Remove beams on `NoteStopped`
 - [ ] Synchronize beam timing
-- [ ] Support chords (multiple simultaneous notes)
-- [ ] Allow multiple visualization modules
+- [x] Support chords (multiple simultaneous notes)
+- [x] Allow multiple visualization modules
+
+# Milestone 5.5 – Beam Animation
+
+- [ ] Animate beams toward piano keys
+- [ ] Make beams arrive exactly on NoteStarted
+- [ ] Scale beam length to note duration
+- [ ] Fade beams after NoteStopped
+- [ ] Configurable beam speed
 
 
 # Milestone 6 – Piano Tracking
 
-### Phase 1 – Manual Alignment
-- [ ] Display a static piano image
-- [ ] Overlay the virtual piano
-- [ ] Manual calibration
+## Phase 1 – Manual Alignment
 
-### Phase 2 – Marker-Based Tracking
-- [ ] Integrate Vuforia
-- [ ] Track marker
-- [ ] Automatically align virtual piano
+- [x] Display a static piano image
+- [x] Overlay the virtual piano
+- [x] Manually align the virtual keyboard
 
-### Phase 3 – Markerless Tracking
-- [ ] Replace marker with keyboard detection
-- [ ] Investigate OpenCV
-- [ ] Support static webcam calibration
-- [ ] Prepare interface for future tracking algorithms
+## Phase 2 – Webcam Integration
+- [ ] Display webcam feed
+- [ ] Replace static image
+- [ ] Verify calibration pipeline
+
+## Phase 3 – Keyboard Detection (OpenCV)
+
+- [x] Integrate OpenCV (OpenCvSharp integrated and used by the tracker)
+- [x] Detect keyboard edges (outline detection implemented via contour approximation)
+- [x] Estimate keyboard corners (quad corners detected from contour approx; ordering and CCW sort applied)
+- [x] Automatically align virtual keyboard (corner-based 2D similarity alignment implemented; PCA-based in-plane rotation fallback available)
+- [~] Full homography → 3D pose decomposition (still pending; recommended for strong perspective/webcam cases)
+
+
+
+## Phase 4 – Advanced Tracking
+- [ ] Improve robustness
+- [ ] Feature matching
+- [ ] Investigate YOLO-based detection
 
 
 # Milestone 7 – Framework Modularity
