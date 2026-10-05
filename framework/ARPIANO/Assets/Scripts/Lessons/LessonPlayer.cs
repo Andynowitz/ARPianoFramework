@@ -3,10 +3,8 @@
 // Should also work for more notes at the same time
 // The LessonPlayer checks the current time and activates/deactivates notes accordingly, allowing for real-time playback of the lesson.
 
-using System.Collections;
 using UnityEngine;
 using ARPIANO.Scripts.Models;
-using ARPIANO.Scripts.Piano;
 using System;
 
 namespace ARPIANO.Scripts.Lessons
@@ -16,23 +14,12 @@ namespace ARPIANO.Scripts.Lessons
         private Lesson currentLesson;
         private float currentTime;
         private bool isPlaying;
-        private VirtualPiano piano;
 
         public event Action<PianoNote> NoteStarted;
         public event Action<PianoNote> NoteStopped;
 
         public float GetCurrentTime => currentTime;
 
-        private LessonPlayer lessonPlayer;
-
-        private void Awake()
-        {
-            piano = FindAnyObjectByType<VirtualPiano>();
-            if (piano == null)
-            {
-                Debug.LogError("LessonPlayer requires a VirtualPiano instance in the scene.");
-            }
-        }
 
         public void LoadLesson(Lesson lesson)
         {

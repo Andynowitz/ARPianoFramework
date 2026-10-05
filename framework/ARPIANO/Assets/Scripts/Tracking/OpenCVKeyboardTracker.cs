@@ -90,7 +90,8 @@ namespace ARPIANO.Scripts.Tracking
 
                             if (applied)
                             {
-                                Debug.Log("Applied estimated pose to VirtualPiano.");
+                                vp.transform.SetParent(pianoRenderer.transform, true);
+                                Debug.Log("Applied estimated pose to VirtualPiano and parented it to the reference plane.");
                             }
                             else
                             {
@@ -480,255 +481,399 @@ namespace ARPIANO.Scripts.Tracking
             Cv2.GaussianBlur(gray, blurred, new Size(5, 5), 0);
             using var edges = new Mat();
             Cv2.Canny(blurred, edges, 50, 150);
-
             Cv2.FindContours(edges, out Point[][] contours, out HierarchyIndex[] hierarchy, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
 
             double imageArea = src.Width * src.Height;
             foreach (var contour in contours)
             {
-                double contourArea = Math.Abs(Cv2.ContourArea(contour));
-                if (contourArea < imageArea * 0.01)
+                if (Math.Abs(Cv2.ContourArea(contour)) < imageArea * 0.01)
                     continue;
 
                 var approx = Cv2.ApproxPolyDP(contour, 0.02 * Cv2.ArcLength(contour, true), true);
-                if (approx.Length == 4 && Cv2.IsContourConvex(approx))
-                {
-                    corners = new OpenCvSharp.Point2f[4];
-                    for (int i = 0; i < 4; i++)
-                        corners[i] = new OpenCvSharp.Point2f(approx[i].X, approx[i].Y);
+                if (approx.Length != 4 || !Cv2.IsContourConvex(approx))
+                    continue;
 
-                    // order corners CCW around centroid
-                    var cx = 0.0; var cy = 0.0;
-                    foreach (var p in corners) { cx += p.X; cy += p.Y; }
-                    cx /= 4.0; cy /= 4.0;
-                    Array.Sort(corners, (a, b) => Math.Atan2(a.Y - cy, a.X - cx).CompareTo(Math.Atan2(b.Y - cy, b.X - cx)));
-                    return true;
-                }
+                var detectedCorners = new OpenCvSharp.Point2f[4];
+                for (int i = 0; i < 4; i++)
+                    detectedCorners[i] = new OpenCvSharp.Point2f(approx[i].X, approx[i].Y);
+
+                // OpenCV uses top-left origin with Y increasing downward.
+                // Canonicalize the quadrilateral to TL, TR, BR, BL before pose matching.
+                corners = OrderCornersTopLeftClockwise(detectedCorners);
+                return true;
             }
 
             return false;
         }
 
+        private OpenCvSharp.Point2f[] OrderCornersTopLeftClockwise(OpenCvSharp.Point2f[] points)
+        {
+            var topLeft = points[0];
+            var topRight = points[0];
+            var bottomRight = points[0];
+            var bottomLeft = points[0];
+            float minSum = float.PositiveInfinity;
+            float maxSum = float.NegativeInfinity;
+            float minDifference = float.PositiveInfinity;
+            float maxDifference = float.NegativeInfinity;
+
+            foreach (var point in points)
+            {
+                float sum = point.X + point.Y;
+                float difference = point.X - point.Y;
+                if (sum < minSum) { minSum = sum; topLeft = point; }
+                if (sum > maxSum) { maxSum = sum; bottomRight = point; }
+                if (difference > maxDifference) { maxDifference = difference; topRight = point; }
+                if (difference < minDifference) { minDifference = difference; bottomLeft = point; }
+            }
+
+            return new[] { topLeft, topRight, bottomRight, bottomLeft };
+        }
         private bool EstimateAndApplyPoseUsingCorners(Mat mat, OpenCvSharp.Point2f[] corners, VirtualPiano vp)
         {
-            if (mat == null || mat.Empty() || pianoRenderer == null || vp == null)
+            if (mat == null || mat.Empty() || pianoRenderer == null || vp == null || corners == null || corners.Length != 4)
                 return false;
 
-            Bounds b = pianoRenderer.bounds;
-            // map image corner -> normalized UV
             var worldTargets = new Vector3[4];
             for (int i = 0; i < 4; i++)
             {
-                float u = corners[i].X / (float)mat.Width;
-                float v = 1.0f - (corners[i].Y / (float)mat.Height);
-                worldTargets[i] = new Vector3(b.min.x + u * b.size.x, b.min.y + v * b.size.y, b.center.z);
+                float u = corners[i].X / mat.Width;
+                float v = 1.0f - (corners[i].Y / mat.Height);
+                if (!TryMapNormalizedImageToPlaneWorld(u, v, out worldTargets[i]))
+                    return false;
             }
 
-            // plane basis
-            Vector3 planeNormal = pianoRenderer.transform.forward;
-            Vector3 planeRight = pianoRenderer.transform.right;
-            planeRight -= Vector3.Dot(planeRight, planeNormal) * planeNormal;
-            planeRight.Normalize();
-            Vector3 planeUp = pianoRenderer.transform.up;
-            planeUp -= Vector3.Dot(planeUp, planeNormal) * planeNormal;
-            planeUp.Normalize();
+            Vector3 planeNormal = pianoRenderer.transform.up.normalized;
+            Vector3 planeRight = pianoRenderer.transform.right.normalized;
+            Vector3 planeImageUp = pianoRenderer.transform.forward.normalized;
+            if (!TryMapNormalizedImageToPlaneWorld(0f, 0f, out Vector3 worldOrigin))
+                return false;
 
-            Vector3 worldOrigin = new Vector3(b.min.x, b.min.y, b.center.z);
-
-            // target in 2D plane coords
             var target2 = new System.Numerics.Complex[4];
             for (int i = 0; i < 4; i++)
             {
-                var d = worldTargets[i] - worldOrigin;
-                double _tx = Vector3.Dot(d, planeRight);
-                double _ty = Vector3.Dot(d, planeUp);
-                target2[i] = new System.Numerics.Complex(_tx, _ty);
+                Vector3 d = worldTargets[i] - worldOrigin;
+                target2[i] = new System.Numerics.Complex(Vector3.Dot(d, planeRight), Vector3.Dot(d, planeImageUp));
             }
 
-            // model points from VirtualPiano keys projected into same plane coords
-            var keyPts = new List<System.Numerics.Complex>();
+            var keyPoints = new List<System.Numerics.Complex>();
             foreach (var kv in vp.Keys)
             {
-                Vector3 wp = kv.Value.transform.position;
-                var d = wp - worldOrigin;
-                double mx = Vector3.Dot(d, planeRight);
-                double my = Vector3.Dot(d, planeUp);
-                keyPts.Add(new System.Numerics.Complex(mx, my));
+                Vector3 d = kv.Value.transform.position - worldOrigin;
+                keyPoints.Add(new System.Numerics.Complex(Vector3.Dot(d, planeRight), Vector3.Dot(d, planeImageUp)));
             }
-            if (keyPts.Count == 0)
+            if (keyPoints.Count == 0)
                 return false;
 
-            double minX = double.PositiveInfinity, maxX = double.NegativeInfinity, minY = double.PositiveInfinity, maxY = double.NegativeInfinity;
-            foreach (var c in keyPts)
+            double minX = double.PositiveInfinity, maxX = double.NegativeInfinity;
+            double minY = double.PositiveInfinity, maxY = double.NegativeInfinity;
+            foreach (var point in keyPoints)
             {
-                if (c.Real < minX) minX = c.Real;
-                if (c.Real > maxX) maxX = c.Real;
-                if (c.Imaginary < minY) minY = c.Imaginary;
-                if (c.Imaginary > maxY) maxY = c.Imaginary;
+                if (point.Real < minX) minX = point.Real;
+                if (point.Real > maxX) maxX = point.Real;
+                if (point.Imaginary < minY) minY = point.Imaginary;
+                if (point.Imaginary > maxY) maxY = point.Imaginary;
             }
 
-            var model2 = new System.Numerics.Complex[4];
-            model2[0] = new System.Numerics.Complex(minX, maxY); // TL
-            model2[1] = new System.Numerics.Complex(maxX, maxY); // TR
-            model2[2] = new System.Numerics.Complex(maxX, minY); // BR
-            model2[3] = new System.Numerics.Complex(minX, minY); // BL
+            // Target and model points both use deterministic TL, TR, BR, BL ordering.
+            var model2 = new[]
+            {
+                new System.Numerics.Complex(minX, maxY),
+                new System.Numerics.Complex(maxX, maxY),
+                new System.Numerics.Complex(maxX, minY),
+                new System.Numerics.Complex(minX, minY)
+            };
 
-            // ensure ordering matches target (both CCW). Target was sorted CCW.
-
-            // compute centroids
-            System.Numerics.Complex cz = System.Numerics.Complex.Zero, cw = System.Numerics.Complex.Zero;
-            for (int i = 0; i < 4; i++) { cz += model2[i]; cw += target2[i]; }
-            cz /= 4.0; cw /= 4.0;
-
-            // centered
-            System.Numerics.Complex num = System.Numerics.Complex.Zero; double denom = 0;
+            System.Numerics.Complex modelCentroid = System.Numerics.Complex.Zero;
+            System.Numerics.Complex targetCentroid = System.Numerics.Complex.Zero;
             for (int i = 0; i < 4; i++)
             {
-                var zc = model2[i] - cz;
-                var wc = target2[i] - cw;
-                num += wc * System.Numerics.Complex.Conjugate(zc);
-                denom += (zc.Real * zc.Real + zc.Imaginary * zc.Imaginary);
+                modelCentroid += model2[i];
+                targetCentroid += target2[i];
             }
-            if (denom == 0)
+            modelCentroid /= 4.0;
+            targetCentroid /= 4.0;
+
+            System.Numerics.Complex numerator = System.Numerics.Complex.Zero;
+            double denominator = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                var modelCentered = model2[i] - modelCentroid;
+                var targetCentered = target2[i] - targetCentroid;
+                numerator += targetCentered * System.Numerics.Complex.Conjugate(modelCentered);
+                denominator += modelCentered.Real * modelCentered.Real + modelCentered.Imaginary * modelCentered.Imaginary;
+            }
+            if (denominator == 0)
                 return false;
-            var a = num / denom; // scale*rot as complex
-            double scale = a.Magnitude;
-            double angleRad = Math.Atan2(a.Imaginary, a.Real);
 
-            // compute target centroid world
-            double tgtX = cw.Real - (a.Real * cz.Real - a.Imaginary * cz.Imaginary);
-            double tgtY = cw.Imaginary - (a.Imaginary * cz.Real + a.Real * cz.Imaginary);
+            var transform = numerator / denominator;
+            float scale = (float)transform.Magnitude;
+            float angleDegrees = (float)(Math.Atan2(transform.Imaginary, transform.Real) * 180.0 / Math.PI);
+            double targetX = targetCentroid.Real - (transform.Real * modelCentroid.Real - transform.Imaginary * modelCentroid.Imaginary);
+            double targetY = targetCentroid.Imaginary - (transform.Imaginary * modelCentroid.Real + transform.Real * modelCentroid.Imaginary);
+            Vector3 targetCentroidWorld = worldOrigin + planeRight * (float)targetX + planeImageUp * (float)targetY;
 
-            Vector3 targetCentroidWorld = worldOrigin + planeRight * (float)tgtX + planeUp * (float)tgtY;
+            vp.transform.localScale = new Vector3(vp.transform.localScale.x * scale, vp.transform.localScale.y, vp.transform.localScale.z * scale);
+            vp.transform.rotation = Quaternion.AngleAxis(angleDegrees, planeNormal) * pianoRenderer.transform.rotation;
 
-            // apply
-            // scale
-            vp.transform.localScale = new Vector3(vp.transform.localScale.x * (float)scale, vp.transform.localScale.y, vp.transform.localScale.z * (float)scale);
-
-            // rotation around plane normal
-            float angleDeg = (float)(angleRad * 180.0 / Math.PI);
-            Quaternion rot = Quaternion.AngleAxis(angleDeg, planeNormal);
-            vp.transform.rotation = rot * pianoRenderer.transform.rotation;
-
-            // translate centroid
-            // current centroid from key world positions
             Vector3 currentCentroid = Vector3.zero;
-            foreach (var kv in vp.Keys) currentCentroid += kv.Value.transform.position;
+            foreach (var kv in vp.Keys)
+                currentCentroid += kv.Value.transform.position;
             currentCentroid /= vp.Keys.Count;
 
-            Vector3 delta = targetCentroidWorld - currentCentroid;
-            vp.transform.position += delta;
-
+            vp.transform.position += targetCentroidWorld - currentCentroid;
             return true;
         }
-
-        private bool EstimateAndApplyPose(Mat mat, OpenCvSharp.Rect outline, List<OpenCvSharp.Rect> blackKeyRects, VirtualPiano vp)
+        private bool EstimateAndApplyPose(
+            Mat mat,
+            OpenCvSharp.Rect outline,
+            List<OpenCvSharp.Rect> blackKeyRects,
+            VirtualPiano vp)
         {
             if (pianoRenderer == null || vp == null || mat == null || mat.Empty())
                 return false;
 
-            // Normalized center of detected outline in texture space
-            float normX = (outline.X + outline.Width * 0.5f) / (float)mat.Width;
-            float normY = 1.0f - ((outline.Y + outline.Height * 0.5f) / (float)mat.Height); // flip Y because texture origin
+            // Normalize the center of the detected keyboard outline.
+            float normX =
+                (outline.X + outline.Width * 0.5f) / (float)mat.Width;
 
-            // Use renderer bounds to compute world position
-            Bounds b = pianoRenderer.bounds;
-            Vector3 worldCenter = new Vector3(
-                b.min.x + normX * b.size.x,
-                b.min.y + normY * b.size.y,
-                b.center.z);
+            float normY =
+                1.0f - ((outline.Y + outline.Height * 0.5f) / (float)mat.Height);
 
-            // base rotation aligned to the plane
-            Quaternion worldRotation = pianoRenderer.transform.rotation;
-
-            // compute target keyboard width in world units (portion of plane width)
-            float targetWidthWorld = b.size.x * (outline.Width / (float)mat.Width);
-
-            // find current virtual piano width from keys
-            float currentMinX = float.MaxValue, currentMaxX = float.MinValue;
-            foreach (var kv in vp.Keys)
+            if (!TryMapNormalizedImageToPlaneWorld(
+                    normX,
+                    normY,
+                    out Vector3 worldCenter))
             {
-                var keyObj = kv.Value.gameObject;
-                float x = keyObj.transform.position.x;
-                if (x < currentMinX) currentMinX = x;
-                if (x > currentMaxX) currentMaxX = x;
+                return false;
             }
 
-            if (currentMinX == float.MaxValue || currentMaxX == float.MinValue)
+            // The Unity Plane uses local X/Z as its surface axes.
+            Vector3 planeNormal = pianoRenderer.transform.up.normalized;
+            Vector3 planeRight = pianoRenderer.transform.right.normalized;
+            Vector3 planeImageUp = pianoRenderer.transform.forward.normalized;
+
+            Quaternion worldRotation = pianoRenderer.transform.rotation;
+
+            // Determine the physical width of the reference plane.
+            MeshFilter meshFilter = pianoRenderer.GetComponent<MeshFilter>();
+            if (meshFilter == null || meshFilter.sharedMesh == null)
                 return false;
 
+            Bounds localBounds = meshFilter.sharedMesh.bounds;
+
+            float planeWidthWorld =
+                localBounds.size.x * pianoRenderer.transform.lossyScale.x;
+
+            float targetWidthWorld =
+                planeWidthWorld * (outline.Width / (float)mat.Width);
+
+            if (targetWidthWorld <= 0.0001f)
+                return false;
+
+            // Find the current virtual piano width along the plane's horizontal axis.
+            float currentMinX = float.PositiveInfinity;
+            float currentMaxX = float.NegativeInfinity;
+
+            Vector3 currentCenter = Vector3.zero;
+            int keyCount = 0;
+
+            foreach (var kv in vp.Keys)
+            {
+                Vector3 keyPosition = kv.Value.transform.position;
+
+                float projectedX =
+                    Vector3.Dot(keyPosition, planeRight);
+
+                if (projectedX < currentMinX)
+                    currentMinX = projectedX;
+
+                if (projectedX > currentMaxX)
+                    currentMaxX = projectedX;
+
+                currentCenter += keyPosition;
+                keyCount++;
+            }
+
+            if (keyCount == 0 ||
+                float.IsInfinity(currentMinX) ||
+                float.IsInfinity(currentMaxX))
+            {
+                return false;
+            }
+
+            currentCenter /= keyCount;
+
             float currentWidthWorld = currentMaxX - currentMinX;
+
             if (currentWidthWorld <= 0.0001f)
                 return false;
 
             float scaleFactor = targetWidthWorld / currentWidthWorld;
 
-            // apply uniform scale on X and Z, keep Y unchanged
+            // Apply uniform scaling in the plane.
             Vector3 newScale = vp.transform.localScale;
-            newScale = new Vector3(newScale.x * scaleFactor, newScale.y, newScale.z * scaleFactor);
 
-            // move piano so its center aligns with detected center
-            Vector3 currentCenter = new Vector3((currentMinX + currentMaxX) * 0.5f, vp.transform.position.y, vp.transform.position.z);
-            Vector3 delta = worldCenter - currentCenter;
+            newScale = new Vector3(
+                newScale.x * scaleFactor,
+                newScale.y,
+                newScale.z * scaleFactor
+            );
 
-            // refine rotation using black-key center orientation (PCA)
+            // Refine rotation using the detected black-key orientation.
             if (blackKeyRects != null && blackKeyRects.Count >= 2)
             {
-                // compute principal axis angle in image space, flipping Y so increasing Y is up
-                double meanX = 0, meanY = 0;
+                // Compute principal axis angle in image space.
+                double meanX = 0;
+                double meanY = 0;
+
                 int n = blackKeyRects.Count;
+
                 var ptsX = new double[n];
                 var ptsY = new double[n];
+
                 for (int i = 0; i < n; i++)
                 {
-                    ptsX[i] = blackKeyRects[i].X + blackKeyRects[i].Width * 0.5;
-                    ptsY[i] = -(blackKeyRects[i].Y + blackKeyRects[i].Height * 0.5); // flip Y
+                    ptsX[i] =
+                        blackKeyRects[i].X +
+                        blackKeyRects[i].Width * 0.5;
+
+                    // OpenCV Y points downward, so invert it.
+                    ptsY[i] =
+                        -(blackKeyRects[i].Y +
+                        blackKeyRects[i].Height * 0.5);
+
                     meanX += ptsX[i];
                     meanY += ptsY[i];
                 }
-                meanX /= n; meanY /= n;
 
-                double covXX = 0, covXY = 0, covYY = 0;
+                meanX /= n;
+                meanY /= n;
+
+                double covXX = 0;
+                double covXY = 0;
+                double covYY = 0;
+
                 for (int i = 0; i < n; i++)
                 {
                     double dx = ptsX[i] - meanX;
                     double dy = ptsY[i] - meanY;
+
                     covXX += dx * dx;
                     covXY += dx * dy;
                     covYY += dy * dy;
                 }
-                covXX /= n; covXY /= n; covYY /= n;
 
-                // principal angle (radians)
-                double theta = 0.5 * Math.Atan2(2.0 * covXY, covXX - covYY);
+                covXX /= n;
+                covXY /= n;
+                covYY /= n;
+
+                double theta =
+                    0.5 * Math.Atan2(
+                        2.0 * covXY,
+                        covXX - covYY);
+
                 float vx = (float)Math.Cos(theta);
                 float vy = (float)Math.Sin(theta);
 
-                // map 2D image direction to world-space direction on the plane
-                Vector3 imgDirWorld = pianoRenderer.transform.right * vx + pianoRenderer.transform.up * vy;
-                Vector3 planeNormal = pianoRenderer.transform.forward;
-                // project onto plane (remove normal component)
-                imgDirWorld -= Vector3.Dot(imgDirWorld, planeNormal) * planeNormal;
+                // Convert the detected image direction onto the Plane.
+                Vector3 imgDirWorld =
+                    planeRight * vx +
+                    planeImageUp * vy;
+
+                imgDirWorld -=
+                    Vector3.Dot(imgDirWorld, planeNormal) *
+                    planeNormal;
+
                 if (imgDirWorld.sqrMagnitude > 1e-6f)
+                {
                     imgDirWorld.Normalize();
 
-                Vector3 planeRight = pianoRenderer.transform.right;
-                planeRight -= Vector3.Dot(planeRight, planeNormal) * planeNormal;
-                if (planeRight.sqrMagnitude > 1e-6f)
-                    planeRight.Normalize();
+                    float signedAngle =
+                        Vector3.SignedAngle(
+                            planeRight,
+                            imgDirWorld,
+                            planeNormal);
 
-                float signedAngle = Vector3.SignedAngle(planeRight, imgDirWorld, planeNormal);
-                Quaternion rotAroundNormal = Quaternion.AngleAxis(signedAngle, planeNormal);
-                vp.transform.rotation = rotAroundNormal * worldRotation;
+                    Quaternion rotAroundNormal =
+                        Quaternion.AngleAxis(
+                            signedAngle,
+                            planeNormal);
+
+                    vp.transform.rotation =
+                        Quaternion.AngleAxis(180f, planeNormal) *
+                        rotAroundNormal *
+                        worldRotation;
+                }
+                else
+                {
+                    vp.transform.rotation =
+                        Quaternion.AngleAxis(180f, planeNormal) *
+                        worldRotation;
+                }
             }
             else
             {
                 vp.transform.rotation = worldRotation;
             }
+
             vp.transform.localScale = newScale;
-            vp.transform.position += delta;
+
+            // Recalculate the center after changing rotation/scale.
+            Vector3 transformedCenter = Vector3.zero;
+            int transformedCount = 0;
+
+            foreach (var kv in vp.Keys)
+            {
+                transformedCenter += kv.Value.transform.position;
+                transformedCount++;
+            }
+
+            if (transformedCount > 0)
+                transformedCenter /= transformedCount;
+
+            // Move the virtual piano onto the detected keyboard center.
+            vp.transform.position +=
+                worldCenter - transformedCenter;
 
             return true;
         }
+
+        private bool TryMapNormalizedImageToPlaneWorld(
+            float u,
+            float v,
+            out Vector3 worldPoint)
+        {
+            worldPoint = Vector3.zero;
+
+            if (pianoRenderer == null)
+                return false;
+
+            Transform planeTransform = pianoRenderer.transform;
+
+            // Use the actual local-space size of the Unity Plane.
+            MeshFilter meshFilter = pianoRenderer.GetComponent<MeshFilter>();
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+                return false;
+
+            Bounds localBounds = meshFilter.sharedMesh.bounds;
+
+            // The Unity Plane lies in its local XZ plane.
+            // X = image horizontal
+            // Z = image vertical/depth
+            // Y = plane normal
+            float localX = Mathf.Lerp(localBounds.min.x, localBounds.max.x, u);
+            float localZ = Mathf.Lerp(localBounds.min.z, localBounds.max.z, v);
+
+            Vector3 localPoint = new Vector3(
+                localX,
+                localBounds.center.y,
+                localZ
+            );
+
+            worldPoint = planeTransform.TransformPoint(localPoint);
+            return true;
+        }
+
     }
 }

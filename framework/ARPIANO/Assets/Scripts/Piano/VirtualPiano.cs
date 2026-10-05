@@ -70,12 +70,6 @@ namespace ARPIANO.Scripts.Piano
             lessonPlayer.NoteStopped += HandleNoteStopped;
             lessonEventsSubscribed = true;
         }
-
-        private void Start()
-        {
-            GenerateKeyboard();
-        }
-
         private void Awake()
         {
             // Load prefabs programmatically so Inspector cannot override them
@@ -83,6 +77,8 @@ namespace ARPIANO.Scripts.Piano
             blackKeyPrefab = PianoPrefabLoader.LoadBlackKey();
 
             Debug.Log($"VirtualPiano Awake: whiteKeyPrefab={(whiteKeyPrefab!=null?whiteKeyPrefab.name:"null")}, blackKeyPrefab={(blackKeyPrefab!=null?blackKeyPrefab.name:"null")}");
+
+            GenerateKeyboard();
         }
 
         private struct KeyDefinition
