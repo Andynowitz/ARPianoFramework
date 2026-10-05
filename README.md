@@ -75,20 +75,27 @@ The project will be developed incrementally. Every milestone should produce a wo
 
 # Milestone 5 – Visualization
 
-- [x] Create Beam Visualizer
-- [x] Spawn beams on `NoteStarted`
-- [x] Remove beams on `NoteStopped`
+- [x] Create initial Beam Visualizer prototype
+- [ ] Spawn beams on `NoteStarted`
+- [ ] Remove beams on `NoteStopped`
 - [ ] Synchronize beam timing
-- [x] Support chords (multiple simultaneous notes)
-- [x] Allow multiple visualization modules
+- [ ] Support chords (multiple simultaneous notes)
+- [ ] Verify beam positioning
+- [ ] Verify beam movement direction
+- [ ] Verify beam endpoint at the top of piano keys
+- [ ] Synchronize beam timing with lesson playback
+- [ ] Verify beam duration
+- [ ] Decide whether the current beam implementation should be improved or redesigned
 
 # Milestone 5.5 – Beam Animation
 
+- [ ] Define correct beam coordinate system
 - [ ] Animate beams toward piano keys
-- [ ] Make beams arrive exactly on NoteStarted
+- [ ] Make beams arrive exactly at the target key
 - [ ] Scale beam length to note duration
 - [ ] Fade beams after NoteStopped
-- [ ] Configurable beam speed
+- [ ] Add configurable beam speed
+- [ ] Verify behavior from the intended camera perspective
 
 
 # Milestone 6 – Piano Tracking
@@ -101,8 +108,10 @@ The project will be developed incrementally. Every milestone should produce a wo
 
 ## Phase 2 – Webcam Integration
 - [ ] Display webcam feed
-- [ ] Replace static image
-- [ ] Verify calibration pipeline
+- [ ] Replace static image input with webcam frames
+- [ ] Verify camera image orientation
+- [ ] Verify calibration pipeline using the webcam
+- [ ] Test tracking with a real piano
 
 ## Phase 3 – Keyboard Detection (OpenCV)
 
@@ -110,14 +119,17 @@ The project will be developed incrementally. Every milestone should produce a wo
 - [x] Detect keyboard edges (outline detection implemented via contour approximation)
 - [x] Estimate keyboard corners (quad corners detected from contour approx; ordering and CCW sort applied)
 - [x] Automatically align virtual keyboard (corner-based 2D similarity alignment implemented; PCA-based in-plane rotation fallback available)
-- [~] Full homography → 3D pose decomposition (still pending; recommended for strong perspective/webcam cases)
-
-
+- [ ] Validate the alignment with additional images
+- [ ] Test robustness against rotation, scaling and perspective changes
+- [ ] Test detection with partial keyboard visibility
 
 ## Phase 4 – Advanced Tracking
-- [ ] Improve robustness
-- [ ] Feature matching
-- [ ] Investigate YOLO-based detection
+- [ ] Improve detection robustness
+- [ ] Support partial keyboard visibility
+- [ ] Investigate feature matching
+- [ ] Investigate improved perspective handling
+- [ ] Investigate improved perspective handling
+- [ ] Full homography → 3D pose decomposition, if required
 
 
 # Milestone 7 – Framework Modularity
@@ -126,7 +138,9 @@ The project will be developed incrementally. Every milestone should produce a wo
 - [ ] Create interchangeable visualizers
 - [ ] Introduce event-driven communication
 - [ ] Separate Lesson, Tracking and Visualization systems
+- [ ] Remove unnecessary dependencies between components
 - [ ] Document framework architecture
+- [ ] Validate that modules can be replaced independently
 
 
 # Milestone 8 – Mixed Reality
@@ -156,7 +170,9 @@ No visualization or tracking should be implemented before the core architecture 
 - Multiple visualization modes
 - Hand tracking
 - Live MIDI keyboard input
-- Markerless piano detection
+- Markerless piano detection improvements
 - Automatic sheet music generation
 - Additional lesson formats
 - Performance recording and replay
+- Real-time webcam tracking
+- Advanced 3D camera pose estimation
