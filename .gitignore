@@ -63,4 +63,5 @@ Build UWP/
 Build Windows/
 BuildAndroid/
 BuildWindows/
-old/
+old/.continue/
+.continue/
