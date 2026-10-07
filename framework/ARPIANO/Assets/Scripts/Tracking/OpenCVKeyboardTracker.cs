@@ -17,9 +17,24 @@ namespace ARPIANO.Scripts.Tracking
         [SerializeField] private Renderer pianoRenderer;
         [SerializeField] private WebcamCapture webcamCapture;
         [SerializeField, Range(21, 108)] private int firstVisibleMidiNote = 21;
+        [Header("Calibration marker diagnostics")]
+        [SerializeField, Range(0, 179)] private int yellowMarkerHueMin = 15;
+        [SerializeField, Range(0, 179)] private int yellowMarkerHueMax = 40;
+        [SerializeField, Range(0, 255)] private int markerSaturationMin = 100;
+        [SerializeField, Range(0, 255)] private int markerValueMin = 100;
+        [SerializeField, Min(1)] private int markerMinimumArea = 40;
+        [SerializeField, Min(0)] private int calibrationMarkerBottomExpansionPixels = 220;
+        [Header("Keyboard geometry diagnostics")]
+        [SerializeField] private int geometryMeasurementYOffsetPixels = -80;
+        [SerializeField, Range(40, 60)] private int geometryMeasurementBandHeightPixels = 50;
+        [SerializeField] private bool verboseLogging = false;
+        private KeyboardGeometryDetector geometryDetector;
 
         private IEnumerator Start()
         {
+            int finalBlackKeyCount = 0;
+            int finalWhiteLineCount = 0;
+            string finalPattern = "FAILED";
             if (webcamCapture == null)
                 webcamCapture = FindAnyObjectByType<WebcamCapture>();
 
@@ -46,11 +61,11 @@ namespace ARPIANO.Scripts.Tracking
 
                     mat = WebCamTextureToMat(webcam);
                     if (mat != null)
-                        Debug.Log($"Loaded webcam frame: {mat.Width}x{mat.Height}");
+                        VerboseLog($"Loaded webcam frame: {mat.Width}x{mat.Height}");
                 }
                 else
                 {
-                    Debug.LogWarning(
+                    VerboseWarning(
                         $"Webcam did not provide a valid updated frame before timeout: " +
                         $"isPlaying={webcam.isPlaying}, didUpdateThisFrame={webcam.didUpdateThisFrame}, " +
                         $"width={webcam.width}, height={webcam.height}");
@@ -63,7 +78,7 @@ namespace ARPIANO.Scripts.Tracking
                 if (image == null)
                     yield break;
 
-                Debug.Log($"Source texture: {image.name} format={image.format} readable={image.isReadable}");
+                VerboseLog($"Source texture: {image.name} format={image.format} readable={image.isReadable}");
 
                 Texture2D readable = GetReadableTexture(image);
                 if (readable == null)
@@ -72,7 +87,7 @@ namespace ARPIANO.Scripts.Tracking
                     yield break;
                 }
 
-                Debug.Log($"Readable texture: {readable.name} format={readable.format} readable={readable.isReadable}");
+                VerboseLog($"Readable texture: {readable.name} format={readable.format} readable={readable.isReadable}");
                 mat = TextureToMat(readable);
             }
 
@@ -80,49 +95,74 @@ namespace ARPIANO.Scripts.Tracking
                 yield break;
 
             LogMatStatistics(mat);
-            Debug.Log($"Loaded image: {mat.Width}x{mat.Height}");
+            VerboseLog($"Loaded image: {mat.Width}x{mat.Height}");
 
             if (webcamCapture != null &&
                 webcamCapture.ActiveTexture != null &&
                 IsMatBlack(mat))
             {
-                Debug.LogWarning("Webcam remained black after the 3-second startup delay; stopping before keyboard detection.");
+                VerboseWarning("Webcam remained black after the 3-second startup delay; stopping before keyboard detection.");
                 yield break;
             }
 
             var outline = DetectKeyboardOutline(mat);
+            OpenCvSharp.Rect calibrationRegion = GetCalibrationMarkerRegion(mat, outline);
+            bool markerCalibrationAvailable = DetectCalibrationMarkers(
+                mat,
+                calibrationRegion,
+                out List<CalibrationMarkerCandidate> calibrationMarkers);
+            bool markerCalibrationApplied = markerCalibrationAvailable &&
+                TryApplyMarkerCalibration(mat, calibrationMarkers);
+            if (markerCalibrationAvailable && !markerCalibrationApplied)
+                EssentialLog("Calibration anchors detected but marker-based alignment could not be applied.");
+            if (markerCalibrationAvailable)
+            {
+                geometryDetector = new KeyboardGeometryDetector(
+                    geometryMeasurementYOffsetPixels,
+                    geometryMeasurementBandHeightPixels);
+                DetectKeyboardGeometry(mat, calibrationRegion, calibrationMarkers);
+            }
             if (outline.Width > 0 && outline.Height > 0)
             {
-                Debug.Log($"Found keyboard outline: x={outline.X} y={outline.Y} w={outline.Width} h={outline.Height}");
+                VerboseLog($"Found keyboard outline: x={outline.X} y={outline.Y} w={outline.Width} h={outline.Height}");
 
-                if (outline.Width < mat.Width * 0.2f || outline.Height < mat.Height * 0.1f || outline.Width / (float)outline.Height < 2.5f)
+                bool validOutline =
+                    outline.Width >= mat.Width * 0.2f &&
+                    outline.Height >= mat.Height * 0.1f &&
+                    outline.Width / (float)outline.Height >= 2.5f;
+                OpenCvSharp.Rect whiteKeyRegion = outline;
+                if (!validOutline)
                 {
-                    Debug.LogWarning("Detected outline is too small or has an invalid aspect ratio; this is likely a false positive.");
+                    VerboseWarning("Detected outline is too small or has an invalid aspect ratio; this is likely a false positive.");
+                    whiteKeyRegion = new OpenCvSharp.Rect(0, 0, mat.Width, mat.Height);
+                    VerboseLog("Invalid keyboard outline; using full webcam frame for white-key structure.");
                 }
 
                 bool hasWhiteKeyStructure = TryDetectWhiteKeyLines(
                     mat,
-                    outline,
+                    whiteKeyRegion,
                     out float leftEdge,
                     out float rightEdge,
                     out float keySpacing,
                     out int lineCount);
                 int visibleWhiteKeyCount = lineCount - 1;
+                finalWhiteLineCount = lineCount;
                 if (hasWhiteKeyStructure)
                 {
-                    Debug.Log($"Detected {lineCount} vertical white-key lines; visible white keys={visibleWhiteKeyCount}; left={leftEdge:F1} right={rightEdge:F1} spacing={keySpacing:F1}");
+                    VerboseLog($"Detected {lineCount} vertical white-key lines; visible white keys={visibleWhiteKeyCount}; left={leftEdge:F1} right={rightEdge:F1} spacing={keySpacing:F1}");
                 }
                 else
                 {
-                    Debug.LogWarning("White key line detection failed inside the detected keyboard outline.");
+                    VerboseWarning("White key line detection failed inside the detected keyboard outline.");
                 }
 
-                if (TryDetectBlackKeys(mat, outline, out int blackKeyCount, out float averageAspect, out List<OpenCvSharp.Rect> blackKeyRects))
+                if (TryDetectBlackKeys(mat, outline, keySpacing, out int blackKeyCount, out float averageAspect, out List<OpenCvSharp.Rect> blackKeyRects))
                 {
-                    Debug.Log($"Detected {blackKeyCount} black-key candidates; avg aspect ratio={averageAspect:F2}");
+                    finalBlackKeyCount = blackKeyCount;
+                    VerboseLog($"Detected {blackKeyCount} black-key candidates; avg aspect ratio={averageAspect:F2}");
                     int inferredFirstMidiNote = firstVisibleMidiNote;
 
-                    if (hasWhiteKeyStructure && visibleWhiteKeyCount > 0)
+                    if (!markerCalibrationApplied && hasWhiteKeyStructure && visibleWhiteKeyCount > 0)
                     {
                         var rangePiano = FindAnyObjectByType<VirtualPiano>();
                         if (rangePiano != null)
@@ -136,12 +176,12 @@ namespace ARPIANO.Scripts.Tracking
                                 out inferredFirstMidiNote))
                             {
                                 int endMidi = GetLastVisibleMidiNote(inferredFirstMidiNote, visibleWhiteKeyCount);
-                                Debug.Log($"Generating visible keyboard: MIDI {inferredFirstMidiNote} -> MIDI {endMidi}");
+                                VerboseLog($"Generating visible keyboard: MIDI {inferredFirstMidiNote} -> MIDI {endMidi}");
                                 rangePiano.GenerateVisibleRange(inferredFirstMidiNote, visibleWhiteKeyCount);
                             }
                             else
                             {
-                                Debug.LogWarning("Relative black-key pattern is reliable, but absolute MIDI octave is unresolved; visible keyboard generation skipped.");
+                                VerboseWarning("Relative black-key pattern is reliable, but absolute MIDI octave is unresolved; visible keyboard generation skipped.");
                             }
                         }
                     }
@@ -149,15 +189,17 @@ namespace ARPIANO.Scripts.Tracking
                     // attempt refined corner detection first
                     if (TryDetectOutlineCorners(mat, out OpenCvSharp.Point2f[] corners))
                     {
-                        Debug.Log($"Detected outline corners: {corners.Length}");
+                        VerboseLog($"Detected outline corners: {corners.Length}");
                     }
 
-                    if (TryVerifyPianoPattern(blackKeyRects, out string patternDescription))
+                    if (TryVerifyPianoPattern(blackKeyRects, keySpacing, out string patternDescription))
                     {
-                        Debug.Log($"Piano pattern verified: {patternDescription}");
+                        finalPattern = "VERIFIED";
+                        VerboseLog($"Piano pattern verified: {patternDescription}");
+                        DisplayVerifiedBlackKeyGeometry(mat, blackKeyRects);
 
                         var vp = FindAnyObjectByType<VirtualPiano>();
-                        if (vp != null)
+                        if (vp != null && !markerCalibrationApplied)
                         {
                             // prefer corner-based alignment when available
                             bool applied = false;
@@ -173,28 +215,28 @@ namespace ARPIANO.Scripts.Tracking
                             if (applied)
                             {
                                 vp.transform.SetParent(pianoRenderer.transform, true);
-                                Debug.Log("Applied estimated pose to VirtualPiano and parented it to the reference plane.");
+                                VerboseLog("Applied estimated pose to VirtualPiano and parented it to the reference plane.");
                             }
                             else
                             {
-                                Debug.LogWarning("Pose estimation failed.");
+                                VerboseWarning("Pose estimation failed.");
                             }
                         }
                         else
                         {
-                            Debug.LogWarning("VirtualPiano instance not found in scene.");
+                            VerboseWarning("VirtualPiano instance not found in scene.");
                         }
                     }
                     else
                     {
-                        Debug.LogWarning($"Piano pattern verification failed: {patternDescription}");
+                        VerboseWarning($"Piano pattern verification failed: {patternDescription}");
                     }
                 }
                 else
                 {
-                    Debug.LogWarning("Black key detection failed inside the detected keyboard outline.");
+                    VerboseWarning("Black key detection failed inside the detected keyboard outline.");
                     if (hasWhiteKeyStructure && visibleWhiteKeyCount > 0)
-                        Debug.LogWarning("No black-key pattern was detected; absolute MIDI octave is unresolved and visible keyboard generation is skipped.");
+                        VerboseWarning("No black-key pattern was detected; absolute MIDI octave is unresolved and visible keyboard generation is skipped.");
                 }
             }
             else
@@ -209,22 +251,26 @@ namespace ARPIANO.Scripts.Tracking
                     out float structureAngle))
                 {
                     int visibleWhiteKeyCount = structureLineCount - 1;
-                    Debug.Log("Keyboard structure detected.");
-                    Debug.Log($"Detected {structureLineCount} white-key separator lines.");
-                    Debug.Log($"Estimated visible white keys: {visibleWhiteKeyCount}.");
-                    Debug.Log($"Estimated keyboard angle: {structureAngle:F1} degrees.");
-                    Debug.Log($"Structure region: x={structureRegion.X} y={structureRegion.Y} w={structureRegion.Width} h={structureRegion.Height}; left={structureLeftEdge:F1} right={structureRightEdge:F1} spacing={structureSpacing:F1}");
+                    finalWhiteLineCount = structureLineCount;
+                    VerboseLog("Keyboard structure detected.");
+                    VerboseLog($"Detected {structureLineCount} white-key separator lines.");
+                    VerboseLog($"Estimated visible white keys: {visibleWhiteKeyCount}.");
+                    VerboseLog($"Estimated keyboard angle: {structureAngle:F1} degrees.");
+                    VerboseLog($"Structure region: x={structureRegion.X} y={structureRegion.Y} w={structureRegion.Width} h={structureRegion.Height}; left={structureLeftEdge:F1} right={structureRightEdge:F1} spacing={structureSpacing:F1}");
 
-                    if (visibleWhiteKeyCount > 0)
+                    if (!markerCalibrationApplied && visibleWhiteKeyCount > 0)
                     {
                         var vp = FindAnyObjectByType<VirtualPiano>();
                         if (vp != null)
                         {
-                            if (TryDetectBlackKeys(mat, structureRegion, out int blackKeyCount, out float averageAspect, out List<OpenCvSharp.Rect> blackKeyRects))
+                            if (TryDetectBlackKeys(mat, structureRegion, structureSpacing, out int blackKeyCount, out float averageAspect, out List<OpenCvSharp.Rect> blackKeyRects))
                             {
-                                Debug.Log($"Detected {blackKeyCount} supporting black-key candidates; avg aspect ratio={averageAspect:F2}");
-                                if (!TryVerifyPianoPattern(blackKeyRects, out string patternDescription))
-                                    Debug.LogWarning($"Black-key pattern validation failed; continuing from white-key structure: {patternDescription}");
+                                finalBlackKeyCount = blackKeyCount;
+                                VerboseLog($"Detected {blackKeyCount} supporting black-key candidates; avg aspect ratio={averageAspect:F2}");
+                                if (TryVerifyPianoPattern(blackKeyRects, structureSpacing, out string patternDescription))
+                                    finalPattern = "VERIFIED";
+                                else
+                                    VerboseWarning($"Black-key pattern validation failed; continuing from white-key structure: {patternDescription}");
 
                                 int inferredFirstMidiNote = firstVisibleMidiNote;
                                 if (TryInferFirstVisibleMidiNote(
@@ -236,48 +282,69 @@ namespace ARPIANO.Scripts.Tracking
                                     out inferredFirstMidiNote))
                                 {
                                     int endMidi = GetLastVisibleMidiNote(inferredFirstMidiNote, visibleWhiteKeyCount);
-                                    Debug.Log($"Generating visible keyboard: MIDI {inferredFirstMidiNote} -> MIDI {endMidi}");
+                                    VerboseLog($"Generating visible keyboard: MIDI {inferredFirstMidiNote} -> MIDI {endMidi}");
                                     vp.GenerateVisibleRange(inferredFirstMidiNote, visibleWhiteKeyCount);
                                 }
                                 else
                                 {
-                                    Debug.LogWarning("Relative black-key pattern is reliable, but absolute MIDI octave is unresolved; visible keyboard generation skipped.");
+                                    VerboseWarning("Relative black-key pattern is reliable, but absolute MIDI octave is unresolved; visible keyboard generation skipped.");
                                 }
                             }
                             else
                             {
-                                Debug.LogWarning("No supporting black keys detected; continuing from white-key structure.");
+                                VerboseWarning("No supporting black keys detected; continuing from white-key structure.");
                                 blackKeyRects = new List<OpenCvSharp.Rect>();
-                                Debug.LogWarning("No black-key pattern was detected; absolute MIDI octave is unresolved and visible keyboard generation is skipped.");
+                                VerboseWarning("No black-key pattern was detected; absolute MIDI octave is unresolved and visible keyboard generation is skipped.");
                             }
 
-                            if (EstimateAndApplyPose(mat, structureRegion, blackKeyRects, vp))
+                            if (!markerCalibrationApplied &&
+                                EstimateAndApplyPose(mat, structureRegion, blackKeyRects, vp))
                             {
                                 if (pianoRenderer != null)
                                     vp.transform.SetParent(pianoRenderer.transform, true);
-                                Debug.Log("Applied available pose estimation from the detected keyboard structure.");
+                                VerboseLog("Applied available pose estimation from the detected keyboard structure.");
                             }
                             else
                             {
-                                Debug.LogWarning("Structure detection succeeded, but existing pose estimation could not be applied. Perspective pose remains a limitation of this fallback.");
+                                VerboseWarning("Structure detection succeeded, but existing pose estimation could not be applied. Perspective pose remains a limitation of this fallback.");
                             }
                         }
                         else
                         {
-                            Debug.LogWarning("Keyboard structure detected, but no VirtualPiano instance was found.");
+                            VerboseWarning("Keyboard structure detected, but no VirtualPiano instance was found.");
                         }
                     }
                 }
                 else
                 {
-                    Debug.LogWarning("Keyboard outline and repeated white-key structure detection both failed; no virtual keyboard was generated.");
+                    VerboseWarning("Keyboard outline and repeated white-key structure detection both failed; no virtual keyboard was generated.");
                 }
             }
+            EssentialLog(
+                $"Keyboard detection: blackKeys={finalBlackKeyCount}, " +
+                $"whiteLines={finalWhiteLineCount}, pattern={finalPattern}");
+        }
+
+        private void EssentialLog(string message)
+        {
+            Debug.Log(message);
+        }
+
+        private void VerboseLog(string message)
+        {
+            if (verboseLogging)
+                Debug.Log(message);
+        }
+
+        private void VerboseWarning(string message)
+        {
+            if (verboseLogging)
+                Debug.LogWarning(message);
         }
 
         private void LogWebcamPixels(WebCamTexture webcam)
         {
-            Debug.Log(
+            VerboseLog(
                 $"Reading WebCamTexture pixels: isPlaying={webcam.isPlaying}, " +
                 $"didUpdateThisFrame={webcam.didUpdateThisFrame}, width={webcam.width}, " +
                 $"height={webcam.height}, videoRotationAngle={webcam.videoRotationAngle}, " +
@@ -288,7 +355,7 @@ namespace ARPIANO.Scripts.Tracking
 
             if (pixels == null)
             {
-                Debug.LogWarning(
+                VerboseWarning(
                     $"WebCamTexture.GetPixels32 returned null. width={webcam.width}, height={webcam.height}, " +
                     $"expectedLength={expectedLength}");
                 return;
@@ -321,7 +388,7 @@ namespace ARPIANO.Scripts.Tracking
                 ? pixels.Length - 1
                 : 0;
 
-            Debug.Log(
+            VerboseLog(
                 $"WebCamTexture.GetPixels32: length={pixels.Length}, expected={expectedLength}, " +
                 $"minRGB={minimum}, maxRGB={maximum}, averageRGB={average:F2}, " +
                 $"topLeft={FormatPixel(pixels, topLeftIndex)}, " +
@@ -348,7 +415,7 @@ namespace ARPIANO.Scripts.Tracking
             float average = pixels.Length > 0
                 ? totalIntensity / (float)pixels.Length
                 : 0f;
-            Debug.Log($"WebCamTexture sample: minRGB={minimum}, maxRGB={maximum}, averageRGB={average:F2}");
+            VerboseLog($"WebCamTexture sample: minRGB={minimum}, maxRGB={maximum}, averageRGB={average:F2}");
         }
 
         private string FormatPixel(Color32[] pixels, int index)
@@ -364,7 +431,7 @@ namespace ARPIANO.Scripts.Tracking
         {
             if (mat == null || mat.Empty())
             {
-                Debug.LogWarning("OpenCV Mat statistics: Mat is null or empty.");
+                VerboseWarning("OpenCV Mat statistics: Mat is null or empty.");
                 return;
             }
 
@@ -382,7 +449,7 @@ namespace ARPIANO.Scripts.Tracking
                 mean = Cv2.Mean(gray).Val0;
             }
 
-            Debug.Log(
+            VerboseLog(
                 $"OpenCV Mat statistics: width={mat.Width}, height={mat.Height}, " +
                 $"type={mat.Type()}, channels={mat.Channels()}, min={minimum:F2}, " +
                 $"max={maximum:F2}, mean={mean:F2}");
@@ -397,7 +464,7 @@ namespace ARPIANO.Scripts.Tracking
 
             if (!Cv2.ImEncode(".png", mat, out byte[] encodedImage))
             {
-                Debug.LogWarning("Unable to encode the original OpenCV Mat for debug display.");
+                VerboseWarning("Unable to encode the original OpenCV Mat for debug display.");
                 return;
             }
 
@@ -405,7 +472,7 @@ namespace ARPIANO.Scripts.Tracking
             if (!texture.LoadImage(encodedImage))
             {
                 Destroy(texture);
-                Debug.LogWarning("Unable to load the encoded original OpenCV Mat into a Unity texture.");
+                VerboseWarning("Unable to load the encoded original OpenCV Mat into a Unity texture.");
                 return;
             }
 
@@ -442,7 +509,7 @@ namespace ARPIANO.Scripts.Tracking
             rect.anchoredPosition = new Vector2(16f, 16f);
             rect.sizeDelta = new Vector2(320f, 180f);
             debugPreview.transform.SetAsLastSibling();
-            Debug.Log($"Displayed original OpenCV Mat: {texture.width}x{texture.height} as 320x180 preview.");
+            VerboseLog($"Displayed original OpenCV Mat: {texture.width}x{texture.height} as 320x180 preview.");
         }
 
         private void CreateDebugVisualization(Mat source, OpenCvSharp.Rect selectedOutline)
@@ -610,13 +677,16 @@ namespace ARPIANO.Scripts.Tracking
                         Cv2.Polylines(debugImage, new[] { outlineCorners }, true, new Scalar(255, 0, 255), 5);
                     }
 
-                    Debug.Log($"Debug Hough lines: total={totalHoughLines}, candidate separator lines={candidateLines.Count}, angle clusters={angleClusters.Count}, position clusters={positionClusterCount}");
-                    Debug.Log($"Debug contours: detected={contours.Length}, candidate quadrilaterals={candidateQuadrilateralCount}, selected quadrilateral={(selectedQuadrilateral != null)}");
+                    VerboseLog($"Debug Hough lines: total={totalHoughLines}, candidate separator lines={candidateLines.Count}, angle clusters={angleClusters.Count}, position clusters={positionClusterCount}");
+                    VerboseLog($"Debug contours: detected={contours.Length}, candidate quadrilaterals={candidateQuadrilateralCount}, selected quadrilateral={(selectedQuadrilateral != null)}");
                     DisplayDebugImage(debugImage);
         }
 
         private void DisplayDebugImage(Mat debugImage)
         {
+                    if (!verboseLogging)
+                        return;
+
                     if (debugImage == null || debugImage.Empty())
                         return;
 
@@ -661,7 +731,7 @@ namespace ARPIANO.Scripts.Tracking
                     rect.offsetMin = Vector2.zero;
                     rect.offsetMax = Vector2.zero;
                     debugPreview.transform.SetAsLastSibling();
-                    Debug.Log($"Displayed OpenCV debug image: {texture.width}x{texture.height}");
+                    VerboseLog($"Displayed OpenCV debug image: {texture.width}x{texture.height}");
                 }
 
         private Texture2D TryGetTexture()
@@ -691,7 +761,7 @@ namespace ARPIANO.Scripts.Tracking
             if (source.isReadable && !IsCompressedFormat(source.format))
                 return source;
 
-            Debug.LogWarning("Creating a readable RGBA32 copy of the texture because the source is either not readable or compressed.");
+            VerboseWarning("Creating a readable RGBA32 copy of the texture because the source is either not readable or compressed.");
             return CopyToReadableRGBA32(source);
         }
 
@@ -739,7 +809,7 @@ namespace ARPIANO.Scripts.Tracking
                 if (!temporaryTarget.IsCreated())
                     temporaryTarget.Create();
 
-                Debug.Log(
+                VerboseLog(
                     $"Webcam GPU readback target: source={webcam.width}x{webcam.height}, " +
                     $"target={temporaryTarget.width}x{temporaryTarget.height}, " +
                     $"format={temporaryTarget.format}, created={temporaryTarget.IsCreated()}, " +
@@ -770,7 +840,7 @@ namespace ARPIANO.Scripts.Tracking
         {
             if (texture == null || !texture.isReadable)
             {
-                Debug.LogWarning($"{label}: texture is null or not readable.");
+                VerboseWarning($"{label}: texture is null or not readable.");
                 return;
             }
 
@@ -789,7 +859,7 @@ namespace ARPIANO.Scripts.Tracking
             float average = pixels.Length > 0
                 ? totalIntensity / (float)pixels.Length
                 : 0f;
-            Debug.Log(
+            VerboseLog(
                 $"{label}: width={texture.width}, height={texture.height}, format={texture.format}, " +
                 $"length={pixels.Length}, minRGB={minimum}, maxRGB={maximum}, averageRGB={average:F2}");
         }
@@ -821,6 +891,414 @@ namespace ARPIANO.Scripts.Tracking
             return Cv2.ImDecode(data, ImreadModes.Color);
         }
 
+        private sealed class CalibrationMarkerCandidate
+        {
+            public OpenCvSharp.Rect Bounds;
+            public Point2f Center;
+            public double Area;
+            public double FillRatio;
+        }
+
+        private OpenCvSharp.Rect GetCalibrationMarkerRegion(Mat src, OpenCvSharp.Rect outline)
+        {
+            bool validOutline = outline.Width >= src.Width * 0.2f &&
+                outline.Height >= src.Height * 0.1f &&
+                outline.Width / (float)Math.Max(1, outline.Height) >= 2.5f;
+            OpenCvSharp.Rect baseRegion = outline;
+            if (!validOutline)
+            {
+                baseRegion = FindFullFrameKeyboardBand(src);
+                if (baseRegion.Width <= 0 || baseRegion.Height <= 0)
+                {
+                    baseRegion = new OpenCvSharp.Rect(
+                        0,
+                        0,
+                        src.Width,
+                        Mathf.Max(1, Mathf.RoundToInt(src.Height * 0.55f)));
+                }
+            }
+
+            int bottom = Mathf.Min(
+                src.Height,
+                baseRegion.Bottom + calibrationMarkerBottomExpansionPixels);
+            int x = Mathf.Clamp(baseRegion.X, 0, Mathf.Max(0, src.Width - 1));
+            int y = Mathf.Clamp(baseRegion.Y, 0, Mathf.Max(0, src.Height - 1));
+            int right = Mathf.Clamp(baseRegion.Right, x + 1, src.Width);
+            bottom = Mathf.Clamp(bottom, y + 1, src.Height);
+            return new OpenCvSharp.Rect(x, y, right - x, bottom - y);
+        }
+
+        private bool DetectCalibrationMarkers(
+            Mat src,
+            OpenCvSharp.Rect searchRegion,
+            out List<CalibrationMarkerCandidate> selectedMarkers)
+        {
+            selectedMarkers = new List<CalibrationMarkerCandidate>();
+            if (src == null || src.Empty())
+                return false;
+
+            int regionX = Mathf.Clamp(searchRegion.X, 0, src.Width - 1);
+            int regionY = Mathf.Clamp(searchRegion.Y, 0, src.Height - 1);
+            int regionRight = Mathf.Clamp(searchRegion.X + searchRegion.Width, regionX + 1, src.Width);
+            int regionBottom = Mathf.Clamp(searchRegion.Y + searchRegion.Height, regionY + 1, src.Height);
+            searchRegion = new OpenCvSharp.Rect(
+                regionX,
+                regionY,
+                regionRight - regionX,
+                regionBottom - regionY);
+            if (searchRegion.Width <= 0 || searchRegion.Height <= 0)
+                return false;
+
+            using var roi = new Mat(src, searchRegion);
+            using var hsv = new Mat();
+            Cv2.CvtColor(roi, hsv, ColorConversionCodes.BGR2HSV);
+            using var yellowMask = CreateCalibrationMarkerMask(hsv, yellowMarkerHueMin, yellowMarkerHueMax);
+
+            var yellowDiagnosticRects = new List<OpenCvSharp.Rect>();
+            List<CalibrationMarkerCandidate> yellowCandidates =
+                FindCalibrationMarkerCandidates(yellowMask, yellowDiagnosticRects, searchRegion);
+            bool found = TrySelectCalibrationMarkerTriplet(yellowCandidates, selectedMarkers);
+
+            if (!found)
+            {
+                using var debugImage = src.Clone();
+                Cv2.Rectangle(debugImage, searchRegion, new Scalar(255, 0, 255), 5);
+                foreach (OpenCvSharp.Rect rect in yellowDiagnosticRects)
+                    DrawCalibrationCandidateDiagnostic(debugImage, rect);
+                DisplayDebugMat(debugImage, "KeyboardGeometryDebugPreview", 1500, 750);
+            }
+
+            if (found)
+            {
+                float spacingLeft = selectedMarkers[1].Center.X - selectedMarkers[0].Center.X;
+                float spacingRight = selectedMarkers[2].Center.X - selectedMarkers[1].Center.X;
+                EssentialLog(
+                    $"Calibration anchors: C3=({selectedMarkers[0].Center.X:F1},{selectedMarkers[0].Center.Y:F1}) " +
+                    $"C4=({selectedMarkers[1].Center.X:F1},{selectedMarkers[1].Center.Y:F1}) " +
+                    $"C5=({selectedMarkers[2].Center.X:F1},{selectedMarkers[2].Center.Y:F1}) | " +
+                    $"spacing=C3-C4:{spacingLeft:F1}px, C4-C5:{spacingRight:F1}px");
+            }
+            else
+                EssentialLog("Calibration anchors unavailable; marker-based alignment skipped.");
+
+            return found;
+        }
+
+        private void DetectKeyboardGeometry(
+            Mat src,
+            OpenCvSharp.Rect keyboardRegion,
+            List<CalibrationMarkerCandidate> markers)
+        {
+            if (src == null || src.Empty() || markers == null || markers.Count != 3)
+                return;
+
+            if (geometryDetector == null)
+                return;
+
+            var markerCenters = new List<Vector2>
+            {
+                new Vector2(markers[0].Center.X, markers[0].Center.Y),
+                new Vector2(markers[1].Center.X, markers[1].Center.Y),
+                new Vector2(markers[2].Center.X, markers[2].Center.Y),
+            };
+            KeyboardGeometry geometry = geometryDetector.Detect(
+                src,
+                keyboardRegion,
+                markerCenters);
+            if (geometry == null || geometry.MeasurementRegion.Width <= 0)
+                return;
+
+            EssentialLog(
+                $"Geometry measurement ROI: x={geometry.MeasurementRegion.X}, y={geometry.MeasurementRegion.Y}, " +
+                $"width={geometry.MeasurementRegion.Width}, height={geometry.MeasurementRegion.Height}");
+            EssentialLog($"Geometry raw vertical candidates: {FormatGeometryValues(geometry.RawVerticalCandidates)}");
+            EssentialLog($"Geometry boundaries: {FormatGeometryValues(geometry.Boundaries)}");
+            EssentialLog($"Geometry widths: {FormatGeometryValues(geometry.Widths)}");
+            EssentialLog($"Geometry centers: {FormatGeometryValues(geometry.Centers)}");
+            EssentialLog(
+                $"C3=({markers[0].Center.X:F1},{markers[0].Center.Y:F1}) " +
+                $"C4=({markers[1].Center.X:F1},{markers[1].Center.Y:F1}) " +
+                $"C5=({markers[2].Center.X:F1},{markers[2].Center.Y:F1}) " +
+                $"nearestCenters=C3:{FormatNearestCenter(geometry.NearestC3Center)}, " +
+                $"C4:{FormatNearestCenter(geometry.NearestC4Center)}, " +
+                $"C5:{FormatNearestCenter(geometry.NearestC5Center)}");
+
+            using var debugImage = src.Clone();
+            Cv2.Rectangle(debugImage, geometry.MeasurementRegion, new Scalar(255, 255, 0), 4);
+            DrawCalibrationMarker(debugImage, markers[0], new Scalar(0, 255, 255), "C3");
+            DrawCalibrationMarker(debugImage, markers[1], new Scalar(0, 255, 255), "C4");
+            DrawCalibrationMarker(debugImage, markers[2], new Scalar(0, 255, 255), "C5");
+            foreach (float boundary in geometry.Boundaries)
+            {
+                int x = Mathf.RoundToInt(boundary);
+                Cv2.Line(
+                    debugImage,
+                    new Point(x, geometry.MeasurementRegion.Top),
+                    new Point(x, geometry.MeasurementRegion.Bottom),
+                    new Scalar(0, 255, 0),
+                    3);
+            }
+
+            foreach (float center in geometry.Centers)
+            {
+                Cv2.Circle(
+                    debugImage,
+                    new Point(
+                        Mathf.RoundToInt(center),
+                        geometry.MeasurementRegion.Top + geometry.MeasurementRegion.Height / 2),
+                    6,
+                    new Scalar(0, 0, 255),
+                    -1);
+            }
+
+            DisplayDebugMat(debugImage, "KeyboardGeometryDebugPreview", 1500, 750);
+        }
+        private string FormatGeometryValues(IReadOnlyList<float> values)
+        {
+            if (values == null || values.Count == 0)
+                return string.Empty;
+
+            var formatted = new List<string>(values.Count);
+            foreach (float value in values)
+                formatted.Add(value.ToString("F1"));
+            return string.Join(", ", formatted);
+        }
+
+        private string FormatNearestCenter(float? center)
+        {
+            return center.HasValue ? $"{center.Value:F1}px" : "NONE";
+        }
+
+        private Mat CreateCalibrationMarkerMask(Mat hsv, int hueMin, int hueMax)
+        {
+            var mask = new Mat();
+            Cv2.InRange(
+                hsv,
+                new Scalar(hueMin, markerSaturationMin, markerValueMin),
+                new Scalar(hueMax, 255, 255),
+                mask);
+            using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(3, 3));
+            Cv2.MorphologyEx(mask, mask, MorphTypes.Open, kernel);
+            Cv2.MorphologyEx(mask, mask, MorphTypes.Close, kernel);
+            return mask;
+        }
+
+        private List<CalibrationMarkerCandidate> FindCalibrationMarkerCandidates(
+            Mat mask,
+            List<OpenCvSharp.Rect> diagnosticRects,
+            OpenCvSharp.Rect searchRegion)
+        {
+            var candidates = new List<CalibrationMarkerCandidate>();
+            Cv2.FindContours(
+                mask,
+                out Point[][] contours,
+                out HierarchyIndex[] hierarchy,
+                RetrievalModes.External,
+                ContourApproximationModes.ApproxSimple);
+
+            foreach (Point[] contour in contours)
+            {
+                OpenCvSharp.Rect bounds = Cv2.BoundingRect(contour);
+                diagnosticRects.Add(new OpenCvSharp.Rect(
+                    bounds.X + searchRegion.X,
+                    bounds.Y + searchRegion.Y,
+                    bounds.Width,
+                    bounds.Height));
+                double area = Cv2.ContourArea(contour);
+                double boxArea = Math.Max(1, bounds.Width * bounds.Height);
+                double fillRatio = area / boxArea;
+                float aspect = bounds.Width / (float)Math.Max(1, bounds.Height);
+                if (area < markerMinimumArea ||
+                    area > searchRegion.Width * searchRegion.Height * 0.08 ||
+                    bounds.Width < 6 ||
+                    bounds.Height < 6 ||
+                    bounds.Width > Mathf.Max(40f, searchRegion.Width * 0.2f) ||
+                    bounds.Height > Mathf.Max(35f, searchRegion.Height * 0.75f) ||
+                    aspect < 0.3f ||
+                    aspect > 3.5f ||
+                    fillRatio < 0.3)
+                    continue;
+
+                candidates.Add(new CalibrationMarkerCandidate
+                {
+                    Bounds = new OpenCvSharp.Rect(
+                        bounds.X + searchRegion.X,
+                        bounds.Y + searchRegion.Y,
+                        bounds.Width,
+                        bounds.Height),
+                    Center = new Point2f(
+                        searchRegion.X + bounds.X + bounds.Width * 0.5f,
+                        searchRegion.Y + bounds.Y + bounds.Height * 0.5f),
+                    Area = area,
+                    FillRatio = fillRatio,
+                });
+            }
+
+            return candidates;
+        }
+
+        private bool TrySelectCalibrationMarkerTriplet(
+            List<CalibrationMarkerCandidate> candidates,
+            List<CalibrationMarkerCandidate> selected)
+        {
+            if (candidates == null || candidates.Count < 3)
+                return false;
+
+            var ordered = new List<CalibrationMarkerCandidate>(candidates);
+            ordered.Sort((a, b) => a.Center.X.CompareTo(b.Center.X));
+            float bestScore = float.PositiveInfinity;
+            CalibrationMarkerCandidate bestLeft = null;
+            CalibrationMarkerCandidate bestMiddle = null;
+            CalibrationMarkerCandidate bestRight = null;
+            for (int i = 0; i < ordered.Count - 2; i++)
+            {
+                for (int j = i + 1; j < ordered.Count - 1; j++)
+                {
+                    for (int k = j + 1; k < ordered.Count; k++)
+                    {
+                        float leftGap = ordered[j].Center.X - ordered[i].Center.X;
+                        float rightGap = ordered[k].Center.X - ordered[j].Center.X;
+                        if (leftGap <= 0f || rightGap <= 0f)
+                            continue;
+
+                        float meanGap = (leftGap + rightGap) * 0.5f;
+                        float spacingError = Mathf.Abs(leftGap - rightGap) / meanGap;
+                        float geometryPenalty =
+                            1f / Mathf.Max(1f, (float)ordered[i].Area) +
+                            1f / Mathf.Max(1f, (float)ordered[j].Area) +
+                            1f / Mathf.Max(1f, (float)ordered[k].Area);
+                        float score = spacingError + geometryPenalty * 1000f;
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            bestLeft = ordered[i];
+                            bestMiddle = ordered[j];
+                            bestRight = ordered[k];
+                        }
+                    }
+                }
+            }
+
+            if (bestLeft == null || bestScore > 0.45f)
+                return false;
+
+            selected.Add(bestLeft);
+            selected.Add(bestMiddle);
+            selected.Add(bestRight);
+            return true;
+        }
+
+        private bool TryApplyMarkerCalibration(
+            Mat mat,
+            List<CalibrationMarkerCandidate> markers)
+        {
+            if (mat == null || markers == null || markers.Count != 3 || pianoRenderer == null)
+                return false;
+
+            VirtualPiano vp = FindAnyObjectByType<VirtualPiano>();
+            if (vp == null || !vp.GenerateVisibleRange(48, 15))
+                return false;
+
+            if (!TryMapNormalizedImageToPlaneWorld(
+                    markers[0].Center.X / mat.Width,
+                    1f - markers[0].Center.Y / mat.Height,
+                    out Vector3 targetC3) ||
+                !TryMapNormalizedImageToPlaneWorld(
+                    markers[1].Center.X / mat.Width,
+                    1f - markers[1].Center.Y / mat.Height,
+                    out Vector3 targetC4) ||
+                !TryMapNormalizedImageToPlaneWorld(
+                    markers[2].Center.X / mat.Width,
+                    1f - markers[2].Center.Y / mat.Height,
+                    out Vector3 targetC5))
+                return false;
+
+            PianoKey c3 = vp.GetKey(48);
+            PianoKey c4 = vp.GetKey(60);
+            PianoKey c5 = vp.GetKey(72);
+            if (c3 == null || c4 == null || c5 == null)
+                return false;
+
+            Vector3 planeNormal = pianoRenderer.transform.up.normalized;
+            Vector3 planeRight = pianoRenderer.transform.right.normalized;
+            Vector3 planeUp = pianoRenderer.transform.forward.normalized;
+            Vector3 origin = pianoRenderer.transform.position;
+            Vector2 modelVectorLeft = new Vector2(
+                Vector3.Dot(c4.transform.position - c3.transform.position, planeRight),
+                Vector3.Dot(c4.transform.position - c3.transform.position, planeUp));
+            Vector2 modelVectorRight = new Vector2(
+                Vector3.Dot(c5.transform.position - c3.transform.position, planeRight),
+                Vector3.Dot(c5.transform.position - c3.transform.position, planeUp));
+            Vector2 targetVectorLeft = new Vector2(
+                Vector3.Dot(targetC4 - targetC3, planeRight),
+                Vector3.Dot(targetC4 - targetC3, planeUp));
+            Vector2 targetVectorRight = new Vector2(
+                Vector3.Dot(targetC5 - targetC3, planeRight),
+                Vector3.Dot(targetC5 - targetC3, planeUp));
+            if (modelVectorLeft.sqrMagnitude < 1e-6f ||
+                modelVectorRight.sqrMagnitude < 1e-6f ||
+                targetVectorLeft.sqrMagnitude < 1e-6f ||
+                targetVectorRight.sqrMagnitude < 1e-6f)
+                return false;
+
+            float scale = (
+                targetVectorLeft.magnitude / modelVectorLeft.magnitude +
+                targetVectorRight.magnitude / modelVectorRight.magnitude) * 0.5f;
+            float angle = (
+                Vector2.SignedAngle(modelVectorLeft, targetVectorLeft) +
+                Vector2.SignedAngle(modelVectorRight, targetVectorRight)) * 0.5f;
+            vp.transform.localScale = new Vector3(
+                vp.transform.localScale.x * scale,
+                vp.transform.localScale.y,
+                vp.transform.localScale.z * scale);
+            vp.transform.rotation =
+                Quaternion.AngleAxis(angle, planeNormal) * vp.transform.rotation;
+
+            Vector3 transformedC3 = c3.transform.position;
+            vp.transform.position += targetC3 - transformedC3;
+            if (pianoRenderer != null)
+                vp.transform.SetParent(pianoRenderer.transform, true);
+
+            EssentialLog(
+                $"Keyboard alignment: marker MIDI anchors 48,60,72 applied; " +
+                $"image span={targetVectorRight.magnitude:F1}px.");
+            return true;
+        }
+
+        private void DrawCalibrationMarker(
+            Mat image,
+            CalibrationMarkerCandidate candidate,
+            Scalar color,
+            string label)
+        {
+            Cv2.Rectangle(image, candidate.Bounds, color, 4);
+            var center = new Point(
+                Mathf.RoundToInt(candidate.Center.X),
+                Mathf.RoundToInt(candidate.Center.Y));
+            int radius = Mathf.Max(
+                18,
+                Mathf.RoundToInt(Mathf.Max(candidate.Bounds.Width, candidate.Bounds.Height) * 0.65f));
+            Cv2.Circle(image, center, radius, color, 5);
+            Cv2.Circle(image, center, 7, color, -1);
+            Cv2.PutText(
+                image,
+                label,
+                new Point(
+                    candidate.Bounds.X,
+                    Math.Max(30, candidate.Bounds.Y - 16)),
+                HersheyFonts.HersheySimplex,
+                1.1,
+                color,
+                3);
+        }
+
+        private void DrawCalibrationCandidateDiagnostic(
+            Mat image,
+            OpenCvSharp.Rect bounds)
+        {
+            Cv2.Rectangle(image, bounds, new Scalar(180, 180, 180), 2);
+        }
+
         private bool TryDetectWhiteKeyLines(Mat src, OpenCvSharp.Rect outline, out float leftEdge, out float rightEdge, out float keySpacing, out int lineCount)
         {
             leftEdge = 0f;
@@ -831,7 +1309,7 @@ namespace ARPIANO.Scripts.Tracking
             if (src == null || src.Empty() || outline.Width <= 0 || outline.Height <= 0)
                 return false;
 
-            Debug.Log(
+            VerboseLog(
                 $"TryDetectWhiteKeyLines input region: x={outline.X}, y={outline.Y}, " +
                 $"width={outline.Width}, height={outline.Height}; source={src.Width}x{src.Height}.");
 
@@ -844,12 +1322,12 @@ namespace ARPIANO.Scripts.Tracking
             Cv2.Canny(blurred, edges, 20, 80);
 
             Cv2.MinMaxLoc(edges, out double edgeMinimum, out double edgeMaximum);
-            Debug.Log(
+            VerboseLog(
                 $"White-key edge image: dimensions={edges.Width}x{edges.Height}, " +
                 $"min={edgeMinimum:F1}, max={edgeMaximum:F1}, mean={Cv2.Mean(edges).Val0:F2}.");
 
             LineSegmentPoint[] lines = Cv2.HoughLinesP(edges, 1, Math.PI / 180.0, 40, outline.Height * 0.2, 6);
-            Debug.Log($"HoughLinesP found {(lines?.Length ?? 0)} raw lines in the keyboard ROI.");
+            VerboseLog($"HoughLinesP found {(lines?.Length ?? 0)} raw lines in the keyboard ROI.");
             if (lines == null || lines.Length == 0)
                 return false;
 
@@ -868,7 +1346,7 @@ namespace ARPIANO.Scripts.Tracking
                     verticalX.Add(xPosition);
             }
 
-            Debug.Log($"White key line candidates after vertical filter: {verticalX.Count}");
+            VerboseLog($"White key line candidates after vertical filter: {verticalX.Count}");
             if (verticalX.Count == 0)
                 return false;
 
@@ -882,8 +1360,8 @@ namespace ARPIANO.Scripts.Tracking
                 }
             }
 
-            Debug.Log($"White key unique x positions: {uniqueX.Count}");
-            Debug.Log(
+            VerboseLog($"White key unique x positions: {uniqueX.Count}");
+            VerboseLog(
                 $"White-key accepted x positions (sorted, ROI coordinates): " +
                 $"{string.Join(", ", uniqueX.ConvertAll(x => x.ToString("F1")))}");
             if (uniqueX.Count < 2)
@@ -892,7 +1370,7 @@ namespace ARPIANO.Scripts.Tracking
             leftEdge = uniqueX[0] + outline.X;
             rightEdge = uniqueX[^1] + outline.X;
             lineCount = uniqueX.Count;
-            Debug.Log(
+            VerboseLog(
                 $"White-key separator span: minX={uniqueX[0]:F1}, maxX={uniqueX[^1]:F1} " +
                 $"in ROI; global leftEdge={leftEdge:F1}, rightEdge={rightEdge:F1}.");
 
@@ -903,7 +1381,7 @@ namespace ARPIANO.Scripts.Tracking
             }
 
             keySpacing = totalSpacing / (uniqueX.Count - 1);
-            Debug.Log(
+            VerboseLog(
                 $"White-key structure result: lines={lineCount}, region-derived span=" +
                 $"({leftEdge:F1}..{rightEdge:F1}), keySpacing={keySpacing:F1}.");
             return true;
@@ -928,7 +1406,7 @@ namespace ARPIANO.Scripts.Tracking
             if (src == null || src.Empty())
                 return false;
 
-            Debug.Log(
+            VerboseLog(
                 $"TryDetectKeyboardStructure input region: x=0, y=0, width={src.Width}, " +
                 $"height={src.Height}; no previous structure region is reused.");
 
@@ -941,7 +1419,7 @@ namespace ARPIANO.Scripts.Tracking
 
             int minimumLength = Math.Max(30, Math.Min(src.Width, src.Height) / 10);
             Cv2.MinMaxLoc(edges, out double edgeMinimum, out double edgeMaximum);
-            Debug.Log(
+            VerboseLog(
                 $"Keyboard-structure edge image: dimensions={edges.Width}x{edges.Height}, " +
                 $"min={edgeMinimum:F1}, max={edgeMaximum:F1}, mean={Cv2.Mean(edges).Val0:F2}; " +
                 $"Hough minimumLength={minimumLength}.");
@@ -1082,11 +1560,11 @@ namespace ARPIANO.Scripts.Tracking
 
             if (bestLines == null || bestLines.Count < 5)
             {
-                Debug.Log("Keyboard structure result: no repeated separator-line group selected.");
+                VerboseLog("Keyboard structure result: no repeated separator-line group selected.");
                 return false;
             }
 
-            Debug.Log($"Keyboard structure initial selected separator count: {bestLines.Count}.");
+            VerboseLog($"Keyboard structure initial selected separator count: {bestLines.Count}.");
 
             float bestRadians = bestAngle * Mathf.Deg2Rad;
             Vector2 separatorNormal = new Vector2(-Mathf.Sin(bestRadians), Mathf.Cos(bestRadians));
@@ -1163,7 +1641,7 @@ namespace ARPIANO.Scripts.Tracking
 
             OpenCvSharp.Rect lineBounds = Cv2.BoundingRect(recoveredPoints);
             region = ExpandAndClampRect(lineBounds, src.Width, src.Height, 0.15f, 0.35f);
-            Debug.Log(
+            VerboseLog(
                 $"Keyboard structure region calculation: selectedLines={bestLines.Count}, recoveredLines={recoveredLines.Count}, " +
                 $"lineBounds=({lineBounds.X},{lineBounds.Y},{lineBounds.Width},{lineBounds.Height}), " +
                 $"expanded/clamped region=({region.X},{region.Y},{region.Width},{region.Height}), " +
@@ -1181,11 +1659,12 @@ namespace ARPIANO.Scripts.Tracking
             keySpacing = bestSpacing;
             lineCount = recoveredLines.Count;
             angleDegrees = bestAngle;
-            Debug.Log(
+            LogWhiteSeparatorDiagnostics(recoveredLines, recoveredLineXPositions, bestSpacing, bestAngle);
+            VerboseLog(
                 $"Keyboard structure selected separator group: angle={angleDegrees:F1} degrees, " +
                 $"xPositions={string.Join(", ", recoveredLineXPositions.ConvertAll(x => x.ToString("F1")))}, " +
                 $"left={leftEdge:F1}, right={rightEdge:F1}, spacing={keySpacing:F1}, lineCount={lineCount}.");
-            Debug.Log(
+            VerboseLog(
                 $"Keyboard structure recovered/extended separator count: {recoveredLines.Count}; " +
                 $"final extent={leftEdge:F1}..{rightEdge:F1}; final spacing={keySpacing:F1}.");
 
@@ -1201,11 +1680,100 @@ namespace ARPIANO.Scripts.Tracking
                 }
 
                 Cv2.Rectangle(debugImage, region, new Scalar(255, 0, 255), 5);
-                DisplayDebugMat(debugImage, "KeyboardStructureDebugPreview", 960, 480);
+                DisplayDebugMat(debugImage, "KeyboardStructureDebugPreview", 1200, 600);
             }
-            Debug.Log($"Displayed keyboard structure debug: {recoveredLines.Count} final separator lines.");
+            VerboseLog($"Displayed keyboard structure debug: {recoveredLines.Count} final separator lines.");
 
             return region.Width > 0 && region.Height > 0;
+        }
+
+        private void LogWhiteSeparatorDiagnostics(
+            List<LineSegmentPoint> lines,
+            List<float> xPositions,
+            float globalSpacing,
+            float referenceAngle)
+        {
+            if (lines == null || xPositions == null || xPositions.Count < 2)
+                return;
+
+            var sortedLines = new List<LineSegmentPoint>(lines);
+            sortedLines.Sort((a, b) =>
+                ((a.P1.X + a.P2.X) * 0.5f).CompareTo((b.P1.X + b.P2.X) * 0.5f));
+
+            var gaps = new List<float>();
+            for (int i = 1; i < xPositions.Count; i++)
+                gaps.Add(xPositions[i] - xPositions[i - 1]);
+            float medianGap = GetMedian(gaps);
+            float smallGapThreshold = Mathf.Max(6f, medianGap * 0.55f);
+            float largeGapThreshold = medianGap * 1.55f;
+
+            var lineDiagnostics = new List<string>();
+            for (int i = 0; i < sortedLines.Count; i++)
+            {
+                LineSegmentPoint line = sortedLines[i];
+                float x = (line.P1.X + line.P2.X) * 0.5f;
+                float angle = Mathf.Atan2(line.P2.Y - line.P1.Y, line.P2.X - line.P1.X) * Mathf.Rad2Deg;
+                float previousGap = i > 0 ? x - xPositions[i - 1] : 0f;
+                float nextGap = i + 1 < xPositions.Count ? xPositions[i + 1] - x : 0f;
+                lineDiagnostics.Add(
+                    $"x={x:F1},angle={angle:F1},prev={previousGap:F1},next={nextGap:F1}");
+            }
+
+            float indexMean = (xPositions.Count - 1) * 0.5f;
+            float xMean = 0f;
+            foreach (float x in xPositions)
+                xMean += x;
+            xMean /= xPositions.Count;
+
+            float covariance = 0f;
+            float indexVariance = 0f;
+            for (int i = 0; i < xPositions.Count; i++)
+            {
+                float indexDelta = i - indexMean;
+                covariance += indexDelta * (xPositions[i] - xMean);
+                indexVariance += indexDelta * indexDelta;
+            }
+
+            float trendSpacing = indexVariance > 0f ? covariance / indexVariance : medianGap;
+            float trendIntercept = xMean - trendSpacing * indexMean;
+            var gapDiagnostics = new List<string>();
+            for (int i = 0; i < gaps.Count; i++)
+            {
+                float predictedGap = trendSpacing;
+                float gap = gaps[i];
+                string classification;
+                if (gap < smallGapThreshold)
+                    classification = "suspicious-small/duplicate";
+                else if (gap > largeGapThreshold)
+                    classification = "suspicious-large/missing-or-outlier";
+                else
+                    classification = "consistent";
+
+                gapDiagnostics.Add(
+                    $"{xPositions[i]:F1}->{xPositions[i + 1]:F1}={gap:F1}" +
+                    $"(trend={predictedGap:F1},{classification})");
+            }
+
+            float leftTrendGap = trendSpacing;
+            float rightTrendGap = trendSpacing;
+            if (xPositions.Count >= 4)
+            {
+                leftTrendGap = (xPositions[2] - xPositions[0]) * 0.5f;
+                int last = xPositions.Count - 1;
+                rightTrendGap = (xPositions[last] - xPositions[last - 2]) * 0.5f;
+            }
+
+            VerboseLog(
+                $"White separator diagnostics: referenceAngle={referenceAngle:F1}, " +
+                $"globalSpacing={globalSpacing:F1}, medianGap={medianGap:F1}, " +
+                $"small<{smallGapThreshold:F1}, large>{largeGapThreshold:F1}.");
+            VerboseLog($"White separator lines: {string.Join("; ", lineDiagnostics)}");
+            VerboseLog($"White separator gaps: {string.Join("; ", gapDiagnostics)}");
+            VerboseLog(
+                $"White separator local spacing trend: fitted={trendSpacing:F2}px/line, " +
+                $"left={leftTrendGap:F2}px, right={rightTrendGap:F2}px, " +
+                $"slope={(rightTrendGap - leftTrendGap):F2}px across image; " +
+                $"modelX0={trendIntercept:F1}.");
         }
 
         private void RecoverSeparatorContinuations(
@@ -1325,9 +1893,9 @@ namespace ARPIANO.Scripts.Tracking
                 whiteKeySpacing <= 0f || visibleWhiteKeyCount <= 0)
                 return false;
 
-            if (!TryVerifyPianoPattern(blackKeyRects, out string patternDescription))
+            if (!TryVerifyPianoPattern(blackKeyRects, whiteKeySpacing, out string patternDescription))
             {
-                Debug.LogWarning($"Black-key pattern is not reliable enough for pitch tracking: {patternDescription}");
+                VerboseWarning($"Black-key pattern is not reliable enough for pitch tracking: {patternDescription}");
                 return false;
             }
 
@@ -1360,9 +1928,9 @@ namespace ARPIANO.Scripts.Tracking
             }
             groups.Add(currentGroup);
 
-            Debug.Log($"Detected black keys: {centers.Count}");
-            Debug.Log($"Black key centers (ordered): {string.Join(", ", centers.ConvertAll(center => center.ToString("F1")))}");
-            Debug.Log($"Detected black-key groups: {string.Join(",", groups)}");
+            VerboseLog($"Detected black keys: {centers.Count}");
+            VerboseLog($"Black key centers (ordered): {string.Join(", ", centers.ConvertAll(center => center.ToString("F1")))}");
+            VerboseLog($"Detected black-key groups: {string.Join(",", groups)}");
 
             bool hasTwoGroup = groups.Contains(2);
             bool hasThreeGroup = groups.Contains(3);
@@ -1413,7 +1981,7 @@ namespace ARPIANO.Scripts.Tracking
                 secondBestError - bestError < 0.08f)
                 return false;
 
-            Debug.Log(
+            VerboseLog(
                 $"Detected relative keyboard phase: {whiteNoteNames[bestPhase]} " +
                 $"(score={bestError:F2}, margin={(secondBestError - bestError):F2}); " +
                 "absolute octave unresolved from image evidence.");
@@ -1472,7 +2040,13 @@ namespace ARPIANO.Scripts.Tracking
             return new OpenCvSharp.Rect(x, y, right - x, bottom - y);
         }
 
-        private bool TryDetectBlackKeys(Mat src, OpenCvSharp.Rect outline, out int blackKeyCount, out float averageAspect, out List<OpenCvSharp.Rect> blackKeyRects)
+        private bool TryDetectBlackKeys(
+            Mat src,
+            OpenCvSharp.Rect outline,
+            float whiteKeySpacing,
+            out int blackKeyCount,
+            out float averageAspect,
+            out List<OpenCvSharp.Rect> blackKeyRects)
         {
             blackKeyCount = 0;
             averageAspect = 0f;
@@ -1509,16 +2083,27 @@ namespace ARPIANO.Scripts.Tracking
             int rejectedAspectCount = 0;
             int rejectedHeightRangeCount = 0;
             int rejectedWideCount = 0;
+            int rejectedSeparatorCount = 0;
             var rejectedRects = new List<OpenCvSharp.Rect>();
+            var acceptedGeometry = new List<string>();
+            var contourGeometry = new List<string>();
 
             foreach (Point[] contour in contours)
             {
                 var rect = Cv2.BoundingRect(contour);
                 float aspect = rect.Width / (float)rect.Height;
+                double contourArea = Cv2.ContourArea(contour);
+                double boxArea = Math.Max(1, rect.Width * rect.Height);
+                float fillRatio = (float)(contourArea / boxArea);
                 float minimumHeight = keybedRegion.Height * 0.12f;
                 float maximumHeight = keybedRegion.Height * 0.9f;
                 float maximumWidth = keybedRegion.Width * 0.045f;
                 float centerY = rect.Y + rect.Height * 0.5f;
+                bool touchesBandTop = rect.Y <= 1;
+                bool narrowShortTopArtifact = touchesBandTop &&
+                    rect.Width <= Mathf.Max(6, Mathf.RoundToInt(whiteKeySpacing * 0.3f)) &&
+                    rect.Height <= Mathf.Max(28, Mathf.RoundToInt(keybedRegion.Height * 0.28f));
+                string rejectionReason = "accepted";
 
                 if (rect.Width < 5)
                     rejectedWidthCount++;
@@ -1534,6 +2119,8 @@ namespace ARPIANO.Scripts.Tracking
                     rejectedHeightRangeCount++;
                 if (rect.Width > maximumWidth)
                     rejectedWideCount++;
+                if (narrowShortTopArtifact)
+                    rejectedSeparatorCount++;
 
                 bool rejected = rect.Width < 4 ||
                     rect.Height < 10 ||
@@ -1543,7 +2130,28 @@ namespace ARPIANO.Scripts.Tracking
                     rect.Height > maximumHeight ||
                     rect.Width > maximumWidth ||
                     centerY < keybedRegion.Height * 0.05f ||
-                    centerY > keybedRegion.Height * 0.95f;
+                    centerY > keybedRegion.Height * 0.95f ||
+                    narrowShortTopArtifact;
+                if (narrowShortTopArtifact)
+                    rejectionReason = "separator-like top-touching narrow/short body";
+                else if (rect.Width < 4)
+                    rejectionReason = "too narrow";
+                else if (rect.Height < 10)
+                    rejectionReason = "too short";
+                else if (aspect > 0.7f || aspect < 0.03f)
+                    rejectionReason = "aspect";
+                else if (rect.Height < minimumHeight || rect.Height > maximumHeight)
+                    rejectionReason = "height range";
+                else if (rect.Width > maximumWidth)
+                    rejectionReason = "too wide";
+                else if (centerY < keybedRegion.Height * 0.05f ||
+                    centerY > keybedRegion.Height * 0.95f)
+                    rejectionReason = "center outside band";
+
+                contourGeometry.Add(
+                    $"x={rect.X + rect.Width * 0.5f:F1},y={rect.Y},w={rect.Width}," +
+                    $"h={rect.Height},area={contourArea:F0},fill={fillRatio:F2}," +
+                    $"top={touchesBandTop},reason={rejectionReason}");
                 if (rejected)
                 {
                     rejectedContourCount++;
@@ -1552,16 +2160,32 @@ namespace ARPIANO.Scripts.Tracking
                 }
 
                 blackKeyRects.Add(rect);
+                acceptedGeometry.Add(
+                    $"x={rect.X + rect.Width * 0.5f:F1},w={rect.Width},h={rect.Height},fill={fillRatio:F2}");
             }
 
-            Debug.Log(
+            VerboseLog(
                 $"Black-key detection: {contours.Length} contours found. " +
                 $"Black-key filtering: {rejectedContourCount} rejected, {blackKeyRects.Count} accepted " +
                 $"(width={rejectedWidthCount}, shortHeight={rejectedShortHeightCount}, " +
                 $"aspect={rejectedAspectCount}, heightRange={rejectedHeightRangeCount}, " +
-                $"wide={rejectedWideCount}).");
-            Debug.Log($"Black-key rectangles after filtering: {blackKeyRects.Count}.");
-            DisplayBlackKeyPatternDebug(src, keybedRegion, blackKeyRects, rejectedRects);
+                $"wide={rejectedWideCount}, separatorLike={rejectedSeparatorCount}).");
+            VerboseLog($"Black-key contour geometry: {string.Join("; ", contourGeometry)}");
+            int rawCandidateCount = blackKeyRects.Count;
+            float blackKeySpacing = EstimateBlackKeyCenterSpacing(blackKeyRects, whiteKeySpacing);
+            blackKeyRects = DeduplicateBlackKeyRects(blackKeyRects, blackKeySpacing);
+            int deduplicatedCandidateCount = blackKeyRects.Count;
+            blackKeySpacing = EstimateBlackKeyCenterSpacing(blackKeyRects, blackKeySpacing);
+            LogSortedBlackKeyCandidates("deduplicated", blackKeyRects, blackKeySpacing);
+            blackKeyRects = FilterPlausibleBlackKeyRects(blackKeyRects, blackKeySpacing);
+            VerboseLog(
+                $"Black-key candidates: raw={rawCandidateCount}, deduplicated={deduplicatedCandidateCount}, " +
+                $"validated={blackKeyRects.Count}, " +
+                $"localSpacing={blackKeySpacing:F1}px (white-support={whiteKeySpacing:F1}px).");
+            VerboseLog($"Black-key accepted geometry: {string.Join("; ", acceptedGeometry)}");
+            LogSortedBlackKeyCandidates("validated", blackKeyRects, blackKeySpacing);
+            AnalyzeBlackKeyCandidatesInWhiteKeyCoordinates(blackKeyRects, whiteKeySpacing);
+            DisplayBlackKeyPatternDebug(src, keybedRegion, blackKeyRects, rejectedRects, blackKeySpacing);
             if (blackKeyRects.Count == 0)
                 return false;
 
@@ -1574,6 +2198,80 @@ namespace ARPIANO.Scripts.Tracking
 
             averageAspect = sumAspect / blackKeyCount;
             return true;
+        }
+
+        private void AnalyzeBlackKeyCandidatesInWhiteKeyCoordinates(
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float whiteKeySpacing)
+        {
+            if (blackKeyRects == null || blackKeyRects.Count == 0 || whiteKeySpacing <= 0f)
+                return;
+
+            var ordered = new List<OpenCvSharp.Rect>(blackKeyRects);
+            ordered.Sort((a, b) => a.X.CompareTo(b.X));
+            float referenceX = ordered[0].X + ordered[0].Width * 0.5f;
+            var positions = new List<float>();
+            var gaps = new List<float>();
+            var interpretation = new List<string>();
+
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                float center = ordered[i].X + ordered[i].Width * 0.5f;
+                float normalizedPosition = (center - referenceX) / whiteKeySpacing;
+                positions.Add(normalizedPosition);
+
+                if (i == 0)
+                    continue;
+
+                float normalizedGap = normalizedPosition - positions[i - 1];
+                gaps.Add(normalizedGap);
+                string classification;
+                if (normalizedGap < 0.7f)
+                    classification = "suspicious-close/duplicate";
+                else if (normalizedGap < 1.35f)
+                    classification = "within-group~1";
+                else if (normalizedGap < 2.45f)
+                    classification = "group-gap~2";
+                else if (normalizedGap < 3.55f)
+                    classification = "possible-missing-key~3";
+                else
+                    classification = "large-gap/multiple-missing";
+
+                interpretation.Add(
+                    $"{ordered[i - 1].X + ordered[i - 1].Width * 0.5f:F1}->" +
+                    $"{center:F1}: {normalizedGap:F2} ({classification})");
+            }
+
+            VerboseLog(
+                $"Black-key white-coordinate positions: refX={referenceX:F1}, " +
+                $"whiteSpacing={whiteKeySpacing:F1}, " +
+                $"{string.Join(", ", positions.ConvertAll(position => position.ToString("F2")))}");
+            VerboseLog(
+                $"Black-key white-coordinate gaps: " +
+                $"{string.Join(", ", gaps.ConvertAll(gap => gap.ToString("F2")))}");
+            VerboseLog(
+                $"Black-key white-coordinate interpretation: " +
+                $"{string.Join("; ", interpretation)}");
+
+            var compactPattern = new List<string>();
+            foreach (float gap in gaps)
+            {
+                if (gap < 0.7f)
+                    compactPattern.Add("D");
+                else if (gap < 1.35f)
+                    compactPattern.Add("1");
+                else if (gap < 2.45f)
+                    compactPattern.Add("2");
+                else if (gap < 3.55f)
+                    compactPattern.Add("3?");
+                else
+                    compactPattern.Add("N");
+            }
+
+            VerboseLog(
+                $"Black-key white-coordinate pattern diagnostic: " +
+                $"{string.Join(" ", compactPattern)}; " +
+                "diagnostic only, no candidates or groups changed.");
         }
 
         private OpenCvSharp.Rect FindFullFrameKeyboardBand(Mat src)
@@ -1625,7 +2323,7 @@ namespace ARPIANO.Scripts.Tracking
                 lower = Mathf.Min(src.Height, upper + Mathf.Max(40, src.Height / 6));
 
             var region = new OpenCvSharp.Rect(0, upper, src.Width, Math.Max(1, lower - upper));
-            Debug.Log($"Black-key search band: x=0 y={region.Y} w={region.Width} h={region.Height}.");
+            VerboseLog($"Black-key search band: x=0 y={region.Y} w={region.Width} h={region.Height}.");
             return region;
         }
 
@@ -1633,14 +2331,14 @@ namespace ARPIANO.Scripts.Tracking
         {
             if (mask == null || mask.Empty())
             {
-                Debug.LogWarning("Black-key mask diagnostics: mask is null or empty.");
+                VerboseWarning("Black-key mask diagnostics: mask is null or empty.");
                 return;
             }
 
             Cv2.MinMaxLoc(mask, out double minimum, out double maximum);
             double mean = Cv2.Mean(mask).Val0;
             int nonZeroPixels = Cv2.CountNonZero(mask);
-            Debug.Log(
+            VerboseLog(
                 $"Black-key mask: roi=({roi.X},{roi.Y},{roi.Width},{roi.Height}), " +
                 $"dimensions={mask.Width}x{mask.Height}, type={mask.Type()}, channels={mask.Channels()}, " +
                 $"min={minimum:F2}, max={maximum:F2}, mean={mean:F2}, nonZeroPixels={nonZeroPixels}");
@@ -1652,7 +2350,8 @@ namespace ARPIANO.Scripts.Tracking
             Mat src,
             OpenCvSharp.Rect region,
             List<OpenCvSharp.Rect> acceptedRects,
-            List<OpenCvSharp.Rect> rejectedRects)
+            List<OpenCvSharp.Rect> rejectedRects,
+            float whiteKeySpacing)
         {
             if (src == null || src.Empty())
                 return;
@@ -1668,7 +2367,7 @@ namespace ARPIANO.Scripts.Tracking
                 Cv2.Rectangle(debugImage, globalRect, new Scalar(0, 0, 255), 2);
             }
 
-            var groups = GetBlackKeyGroups(acceptedRects);
+            var groups = GetBlackKeyGroups(acceptedRects, whiteKeySpacing);
             for (int i = 0; i < acceptedRects.Count; i++)
             {
                 OpenCvSharp.Rect rect = acceptedRects[i];
@@ -1713,13 +2412,275 @@ namespace ARPIANO.Scripts.Tracking
                 new Scalar(255, 0, 0),
                 2);
             Cv2.Rectangle(debugImage, region, new Scalar(255, 0, 255), 4);
-            DisplayDebugMat(debugImage, "BlackKeyPatternDebugPreview", 960, 480);
-            Debug.Log(
+            DisplayDebugMat(debugImage, "BlackKeyPatternDebugPreview", 1500, 750);
+            VerboseLog(
                 $"Black-key pattern debug: accepted={acceptedRects.Count}, rejected={rejectedRects.Count}, " +
                 $"groups={string.Join(",", groups.ConvertAll(group => group.Count.ToString()))}.");
         }
 
-        private List<List<OpenCvSharp.Rect>> GetBlackKeyGroups(List<OpenCvSharp.Rect> blackKeyRects)
+        private void DisplayVerifiedBlackKeyGeometry(
+            Mat src,
+            List<OpenCvSharp.Rect> blackKeyRects)
+        {
+            if (src == null || src.Empty() || blackKeyRects == null || blackKeyRects.Count < 2)
+                return;
+
+            var ordered = new List<OpenCvSharp.Rect>(blackKeyRects);
+            ordered.Sort((a, b) => a.X.CompareTo(b.X));
+            var centers = new List<Point2f>();
+            foreach (OpenCvSharp.Rect rect in ordered)
+            {
+                centers.Add(new Point2f(
+                    rect.X + rect.Width * 0.5f,
+                    rect.Y + rect.Height * 0.5f));
+            }
+
+            float meanX = 0f;
+            float meanY = 0f;
+            foreach (Point2f center in centers)
+            {
+                meanX += center.X;
+                meanY += center.Y;
+            }
+            meanX /= centers.Count;
+            meanY /= centers.Count;
+
+            float covariance = 0f;
+            float varianceX = 0f;
+            foreach (Point2f center in centers)
+            {
+                float dx = center.X - meanX;
+                covariance += dx * (center.Y - meanY);
+                varianceX += dx * dx;
+            }
+
+            float slope = varianceX > 0.01f ? covariance / varianceX : 0f;
+            float angle = Mathf.Atan2(slope, 1f) * Mathf.Rad2Deg;
+            Vector2 tangent = new Vector2(1f, slope).normalized;
+            Vector2 normal = new Vector2(-tangent.y, tangent.x);
+            float tangentMin = float.MaxValue;
+            float tangentMax = float.MinValue;
+            float normalMin = float.MaxValue;
+            float normalMax = float.MinValue;
+
+            foreach (OpenCvSharp.Rect rect in ordered)
+            {
+                var corners = new[]
+                {
+                    new Vector2(rect.Left, rect.Top),
+                    new Vector2(rect.Right, rect.Top),
+                    new Vector2(rect.Right, rect.Bottom),
+                    new Vector2(rect.Left, rect.Bottom),
+                };
+                foreach (Vector2 corner in corners)
+                {
+                    tangentMin = Mathf.Min(tangentMin, Vector2.Dot(corner, tangent));
+                    tangentMax = Mathf.Max(tangentMax, Vector2.Dot(corner, tangent));
+                    normalMin = Mathf.Min(normalMin, Vector2.Dot(corner, normal));
+                    normalMax = Mathf.Max(normalMax, Vector2.Dot(corner, normal));
+                }
+            }
+
+            OpenCvSharp.Rect keybedBand = FindFullFrameKeyboardBand(src);
+            foreach (Vector2 point in new[]
+            {
+                new Vector2(keybedBand.Left, keybedBand.Top),
+                new Vector2(keybedBand.Right, keybedBand.Top),
+                new Vector2(keybedBand.Right, keybedBand.Bottom),
+                new Vector2(keybedBand.Left, keybedBand.Bottom),
+            })
+            {
+                normalMin = Mathf.Min(normalMin, Vector2.Dot(point, normal));
+                normalMax = Mathf.Max(normalMax, Vector2.Dot(point, normal));
+            }
+
+            Vector2 cornerA = tangent * tangentMin + normal * normalMin;
+            Vector2 cornerB = tangent * tangentMax + normal * normalMin;
+            Vector2 cornerC = tangent * tangentMax + normal * normalMax;
+            Vector2 cornerD = tangent * tangentMin + normal * normalMax;
+            var quad = new[]
+            {
+                ToOpenCvPoint(cornerA),
+                ToOpenCvPoint(cornerB),
+                ToOpenCvPoint(cornerC),
+                ToOpenCvPoint(cornerD),
+            };
+
+            float robustSpacing = EstimateBlackKeyCenterSpacing(ordered, 0f);
+            VerboseLog(
+                $"Verified black-key geometry: corners=" +
+                $"({cornerA.x:F1},{cornerA.y:F1}),({cornerB.x:F1},{cornerB.y:F1})," +
+                $"({cornerC.x:F1},{cornerC.y:F1}),({cornerD.x:F1},{cornerD.y:F1}); " +
+                $"axisAngle={angle:F2} degrees, span={tangentMin:F1}..{tangentMax:F1}, " +
+                $"robustSpacing={robustSpacing:F1}px.");
+
+            using var debugImage = src.Clone();
+            Cv2.Polylines(debugImage, new[] { quad }, true, new Scalar(0, 165, 255), 5);
+            foreach (Point2f center in centers)
+                Cv2.Circle(debugImage, new Point((int)center.X, (int)center.Y), 7, new Scalar(255, 255, 0), -1);
+            DisplayDebugMat(debugImage, "VerifiedBlackKeyGeometryDebugPreview", 1500, 750);
+        }
+
+        private Point ToOpenCvPoint(Vector2 point)
+        {
+            return new Point(Mathf.RoundToInt(point.x), Mathf.RoundToInt(point.y));
+        }
+
+        private List<OpenCvSharp.Rect> DeduplicateBlackKeyRects(
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float whiteKeySpacing)
+        {
+            if (blackKeyRects == null || blackKeyRects.Count < 2 || whiteKeySpacing <= 0f)
+                return blackKeyRects ?? new List<OpenCvSharp.Rect>();
+
+            var ordered = new List<OpenCvSharp.Rect>(blackKeyRects);
+            ordered.Sort((a, b) => a.X.CompareTo(b.X));
+            var result = new List<OpenCvSharp.Rect>();
+            float duplicateDistance = whiteKeySpacing * 0.55f;
+            foreach (OpenCvSharp.Rect candidate in ordered)
+            {
+                if (result.Count == 0)
+                {
+                    result.Add(candidate);
+                    continue;
+                }
+
+                float previousCenter = result[result.Count - 1].X + result[result.Count - 1].Width * 0.5f;
+                float candidateCenter = candidate.X + candidate.Width * 0.5f;
+                if (candidateCenter - previousCenter < duplicateDistance &&
+                    ShouldMergeCloseBlackKeyCandidates(result[result.Count - 1], candidate, whiteKeySpacing))
+                {
+                    if (BlackKeyCandidateStrength(candidate) >
+                        BlackKeyCandidateStrength(result[result.Count - 1]))
+                        result[result.Count - 1] = candidate;
+                }
+                else
+                {
+                    result.Add(candidate);
+                }
+            }
+
+            return result;
+        }
+
+        private bool ShouldMergeCloseBlackKeyCandidates(
+            OpenCvSharp.Rect first,
+            OpenCvSharp.Rect second,
+            float spacing)
+        {
+            float firstCenter = first.X + first.Width * 0.5f;
+            float secondCenter = second.X + second.Width * 0.5f;
+            float centerDistance = Mathf.Abs(secondCenter - firstCenter);
+            bool horizontalOverlap = first.X < second.X + second.Width &&
+                second.X < first.X + first.Width;
+            float firstHeight = Mathf.Max(1, first.Height);
+            float heightRatio = Mathf.Min(firstHeight, second.Height) /
+                Mathf.Max(firstHeight, second.Height);
+            float yDistance = Mathf.Abs(
+                (first.Y + first.Height * 0.5f) -
+                (second.Y + second.Height * 0.5f));
+
+            bool sameVerticalExtent = yDistance <= Mathf.Max(8f, spacing * 0.2f) &&
+                heightRatio >= 0.65f;
+            return horizontalOverlap || (centerDistance < spacing * 0.45f && sameVerticalExtent);
+        }
+
+        private float BlackKeyCandidateStrength(OpenCvSharp.Rect rect)
+        {
+            float area = rect.Width * rect.Height;
+            float aspect = rect.Height / (float)Mathf.Max(1, rect.Width);
+            return area * Mathf.Clamp(aspect, 1f, 12f);
+        }
+
+        private void LogSortedBlackKeyCandidates(
+            string stage,
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float spacing)
+        {
+            if (blackKeyRects == null || blackKeyRects.Count == 0)
+                return;
+
+            var ordered = new List<OpenCvSharp.Rect>(blackKeyRects);
+            ordered.Sort((a, b) => a.X.CompareTo(b.X));
+            var entries = new List<string>();
+            float previousCenter = 0f;
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                OpenCvSharp.Rect rect = ordered[i];
+                float center = rect.X + rect.Width * 0.5f;
+                float distance = i == 0 ? 0f : center - previousCenter;
+                float normalized = i == 0 || spacing <= 0f ? 0f : distance / spacing;
+                entries.Add(
+                    $"x={center:F1},d={distance:F1},n={normalized:F2}," +
+                    $"w={rect.Width},h={rect.Height},y={rect.Y}");
+                previousCenter = center;
+            }
+
+            VerboseLog($"Black-key {stage} centers: {string.Join("; ", entries)}");
+        }
+
+        private float EstimateBlackKeyCenterSpacing(
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float fallbackSpacing)
+        {
+            if (blackKeyRects == null || blackKeyRects.Count < 2)
+                return fallbackSpacing;
+
+            var centers = new List<float>();
+            foreach (OpenCvSharp.Rect rect in blackKeyRects)
+                centers.Add(rect.X + rect.Width * 0.5f);
+            centers.Sort();
+
+            var gaps = new List<float>();
+            for (int i = 1; i < centers.Count; i++)
+            {
+                float gap = centers[i] - centers[i - 1];
+                if (gap > 2f)
+                    gaps.Add(gap);
+            }
+
+            if (gaps.Count == 0)
+                return fallbackSpacing;
+
+            gaps.Sort();
+            int localGapCount = Mathf.Max(1, Mathf.CeilToInt(gaps.Count * 0.55f));
+            float localSpacing = GetMedian(gaps.GetRange(0, localGapCount));
+            return localSpacing > 2f ? localSpacing : fallbackSpacing;
+        }
+
+        private List<OpenCvSharp.Rect> FilterPlausibleBlackKeyRects(
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float whiteKeySpacing)
+        {
+            if (blackKeyRects == null || blackKeyRects.Count < 3 || whiteKeySpacing <= 0f)
+                return blackKeyRects ?? new List<OpenCvSharp.Rect>();
+
+            var ordered = new List<OpenCvSharp.Rect>(blackKeyRects);
+            ordered.Sort((a, b) => a.X.CompareTo(b.X));
+            var centers = new List<float>();
+            foreach (OpenCvSharp.Rect rect in ordered)
+                centers.Add(rect.X + rect.Width * 0.5f);
+
+            var result = new List<OpenCvSharp.Rect>();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                float previousGap = i > 0
+                    ? (centers[i] - centers[i - 1]) / whiteKeySpacing
+                    : float.PositiveInfinity;
+                float nextGap = i + 1 < centers.Count
+                    ? (centers[i + 1] - centers[i]) / whiteKeySpacing
+                    : float.PositiveInfinity;
+                if ((previousGap >= 0.55f && previousGap <= 3.0f) ||
+                    (nextGap >= 0.55f && nextGap <= 3.0f))
+                    result.Add(ordered[i]);
+            }
+
+            return result;
+        }
+
+        private List<List<OpenCvSharp.Rect>> GetBlackKeyGroups(
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float whiteKeySpacing)
         {
             var groups = new List<List<OpenCvSharp.Rect>>();
             if (blackKeyRects == null || blackKeyRects.Count == 0)
@@ -1735,19 +2696,40 @@ namespace ARPIANO.Scripts.Tracking
             for (int i = 1; i < centers.Count; i++)
                 gaps.Add(centers[i] - centers[i - 1]);
 
-            var sortedGaps = new List<float>(gaps);
-            sortedGaps.Sort();
-            int normalGapCount = Mathf.Max(1, (sortedGaps.Count + 1) / 2);
-            float normalGap = sortedGaps.Count > 0
-                ? GetMedian(sortedGaps.GetRange(0, normalGapCount))
-                : 0f;
-            float groupGap = normalGap > 0f ? normalGap * 1.45f : float.PositiveInfinity;
+            whiteKeySpacing = EstimateBlackKeyCenterSpacing(blackKeyRects, whiteKeySpacing);
+
+            var normalizedGaps = new List<float>();
+            foreach (float gap in gaps)
+                normalizedGaps.Add(gap / whiteKeySpacing);
+
+            VerboseLog(
+                $"Black-key normalized gaps: " +
+                $"{string.Join(", ", normalizedGaps.ConvertAll(gap => gap.ToString("F2")))}.");
+
+            if (TryPartitionBlackKeyGroups(ordered, normalizedGaps, out List<int> partition, out float partitionScore))
+            {
+                var partitionedGroups = new List<List<OpenCvSharp.Rect>>();
+                int offset = 0;
+                foreach (int size in partition)
+                {
+                    partitionedGroups.Add(ordered.GetRange(offset, size));
+                    offset += size;
+                }
+
+                VerboseLog(
+                    $"Black-key group partition: {string.Join("|", partition)}; " +
+                    $"score={partitionScore:F2}.");
+                return partitionedGroups;
+            }
+
+            VerboseWarning("Black-key group partition is unreliable; retaining geometric groups for debug only.");
             var current = new List<OpenCvSharp.Rect>();
             for (int i = 0; i < ordered.Count; i++)
             {
-                if (current.Count > 0 &&
-                    centers[i] - centers[i - 1] > groupGap &&
-                    (current.Count >= 2 || centers[i] - centers[i - 1] > normalGap * 1.8f))
+                bool groupBoundary = i > 0 &&
+                    normalizedGaps[i - 1] > 1.45f &&
+                    normalizedGaps[i - 1] < 2.7f;
+                if (current.Count > 0 && groupBoundary && current.Count >= 2)
                 {
                     groups.Add(current);
                     current = new List<OpenCvSharp.Rect>();
@@ -1760,14 +2742,112 @@ namespace ARPIANO.Scripts.Tracking
             return groups;
         }
 
+        private bool TryPartitionBlackKeyGroups(
+            List<OpenCvSharp.Rect> ordered,
+            List<float> normalizedGaps,
+            out List<int> bestPartition,
+            out float bestScore)
+        {
+            bestPartition = null;
+            bestScore = float.PositiveInfinity;
+            if (ordered == null || ordered.Count < 4 || normalizedGaps.Count != ordered.Count - 1)
+                return false;
+
+            for (int firstSize = 1; firstSize <= 3; firstSize++)
+            {
+                if (firstSize == 1 && ordered.Count < 5)
+                    continue;
+
+                SearchBlackKeyPartitions(
+                    normalizedGaps,
+                    0,
+                    firstSize,
+                    new List<int>(),
+                    0f,
+                    ref bestPartition,
+                    ref bestScore);
+            }
+
+            if (bestPartition == null || bestPartition.Count < 2)
+                return false;
+
+            bool hasFullGroup = false;
+            foreach (int size in bestPartition)
+                hasFullGroup |= size == 2 || size == 3;
+            return hasFullGroup && bestScore <= Math.Max(4f, ordered.Count * 0.22f);
+        }
+
+        private void SearchBlackKeyPartitions(
+            List<float> normalizedGaps,
+            int startIndex,
+            int groupSize,
+            List<int> currentPartition,
+            float currentScore,
+            ref List<int> bestPartition,
+            ref float bestScore)
+        {
+            int nextIndex = startIndex + groupSize;
+            bool isTrailingPartial = groupSize == 1 &&
+                startIndex > 0 &&
+                nextIndex == normalizedGaps.Count + 1;
+            if (nextIndex > normalizedGaps.Count && !isTrailingPartial)
+                return;
+
+            float score = currentScore;
+            for (int i = startIndex; i < nextIndex - 1; i++)
+                score += Mathf.Abs(normalizedGaps[i] - 1f);
+
+            var updatedPartition = new List<int>(currentPartition) { groupSize };
+            if (nextIndex == normalizedGaps.Count + 1)
+            {
+                if (updatedPartition.Count >= 2 && score < bestScore)
+                {
+                    bestScore = score;
+                    bestPartition = updatedPartition;
+                }
+                return;
+            }
+
+            float boundaryGap = normalizedGaps[nextIndex - 1];
+            score += Mathf.Abs(boundaryGap - 2f);
+            if (boundaryGap < 1.2f)
+                score += 1.5f;
+
+            int previousSize = updatedPartition[updatedPartition.Count - 1];
+            for (int nextSize = 2; nextSize <= 3; nextSize++)
+            {
+                float alternationPenalty = previousSize == nextSize ? 0.7f : 0f;
+                SearchBlackKeyPartitions(
+                    normalizedGaps,
+                    nextIndex,
+                    nextSize,
+                    updatedPartition,
+                    score + alternationPenalty,
+                    ref bestPartition,
+                    ref bestScore);
+            }
+
+            SearchBlackKeyPartitions(
+                normalizedGaps,
+                nextIndex,
+                1,
+                updatedPartition,
+                score,
+                ref bestPartition,
+                ref bestScore);
+        }
+
         private void DisplayDebugMat(Mat mat, string objectName, float width, float height)
         {
+            if (objectName != "KeyboardGeometryDebugPreview")
+                return;
+
             if (mat == null || mat.Empty())
                 return;
 
             if (!Cv2.ImEncode(".png", mat, out byte[] encodedImage))
             {
-                Debug.LogWarning($"Unable to encode debug Mat for {objectName}.");
+                VerboseWarning($"Unable to encode debug Mat for {objectName}.");
                 return;
             }
 
@@ -1775,7 +2855,7 @@ namespace ARPIANO.Scripts.Tracking
             if (!texture.LoadImage(encodedImage))
             {
                 Destroy(texture);
-                Debug.LogWarning($"Unable to load debug Mat texture for {objectName}.");
+                VerboseWarning($"Unable to load debug Mat texture for {objectName}.");
                 return;
             }
 
@@ -1812,10 +2892,13 @@ namespace ARPIANO.Scripts.Tracking
             rect.anchoredPosition = new Vector2(16f, 16f);
             rect.sizeDelta = new Vector2(width, height);
             preview.transform.SetAsLastSibling();
-            Debug.Log($"Displayed {objectName}: {texture.width}x{texture.height} as {width}x{height} preview.");
+            VerboseLog($"Displayed {objectName}: {texture.width}x{texture.height} as {width}x{height} preview.");
         }
 
-        private bool TryVerifyPianoPattern(List<OpenCvSharp.Rect> blackKeyRects, out string patternDescription)
+        private bool TryVerifyPianoPattern(
+            List<OpenCvSharp.Rect> blackKeyRects,
+            float whiteKeySpacing,
+            out string patternDescription)
         {
             patternDescription = string.Empty;
             if (blackKeyRects == null || blackKeyRects.Count < 5)
@@ -1843,28 +2926,17 @@ namespace ARPIANO.Scripts.Tracking
                 return false;
             }
 
-            float medianGap = GetMedian(gaps);
-            if (medianGap <= 0)
+            whiteKeySpacing = EstimateBlackKeyCenterSpacing(blackKeyRects, whiteKeySpacing);
+            if (whiteKeySpacing <= 0f)
             {
                 patternDescription = "Invalid key spacing.";
                 return false;
             }
 
+            var groupedRects = GetBlackKeyGroups(blackKeyRects, whiteKeySpacing);
             var groups = new List<int>();
-            int currentGroup = 1;
-            for (int i = 1; i < centers.Count; i++)
-            {
-                if (gaps[i - 1] > medianGap * 1.8f)
-                {
-                    groups.Add(currentGroup);
-                    currentGroup = 1;
-                }
-                else
-                {
-                    currentGroup++;
-                }
-            }
-            groups.Add(currentGroup);
+            foreach (List<OpenCvSharp.Rect> group in groupedRects)
+                groups.Add(group.Count);
 
             if (groups.Count < 2)
             {
@@ -1881,12 +2953,12 @@ namespace ARPIANO.Scripts.Tracking
                     hasTwoGroup = true;
                 else if (groups[i] == 3)
                     hasThreeGroup = true;
-                else
+                else if (groups[i] != 1 || (i != 0 && i != groups.Count - 1))
                     validPattern = false;
             }
 
             patternDescription = "groups=" + string.Join(",", groups);
-            return validPattern && (hasTwoGroup && hasThreeGroup || groups.Count >= 3);
+            return validPattern && (hasTwoGroup || hasThreeGroup) && groups.Count >= 2;
         }
 
         private float GetMedian(List<float> values)
@@ -1970,7 +3042,7 @@ namespace ARPIANO.Scripts.Tracking
 
                 double area = rect.Width * rect.Height;
                 validCandidateCount++;
-                Debug.Log(
+                VerboseLog(
                     $"Outline candidate {validCandidateCount - 1}: " +
                     $"rect=({rect.X},{rect.Y},{rect.Width},{rect.Height}), area={area:F1}, aspect={aspect:F3}.");
                 if (area > bestArea)
@@ -1981,8 +3053,8 @@ namespace ARPIANO.Scripts.Tracking
                 }
             }
 
-            Debug.Log($"Outline detection: {contours.Length} contours examined.");
-            Debug.Log(
+            VerboseLog($"Outline detection: {contours.Length} contours examined.");
+            VerboseLog(
                 $"Outline filtering: area={areaRejectedCount}, polygon={polygonRejectedCount}, " +
                 $"dimensions={dimensionsRejectedCount}, aspect={aspectRejectedCount}, " +
                 $"valid={validCandidateCount}.");
@@ -1991,7 +3063,7 @@ namespace ARPIANO.Scripts.Tracking
             {
                 bestRect = largestAnyRect;
                 bestContourIndex = largestAnyContourIndex;
-                Debug.Log(
+                VerboseLog(
                     $"Keyboard outline fallback selected contour {largestAnyContourIndex}: " +
                     $"rect=({largestAnyRect.X},{largestAnyRect.Y},{largestAnyRect.Width},{largestAnyRect.Height}), " +
                     $"area={largestAnyArea:F1}, aspect={largestAnyRect.Width / (float)largestAnyRect.Height:F3}.");
@@ -1999,12 +3071,12 @@ namespace ARPIANO.Scripts.Tracking
 
             if (bestRect.Width > 0)
             {
-                Debug.Log(
+                VerboseLog(
                     $"Keyboard outline selected: rect=({bestRect.X},{bestRect.Y},{bestRect.Width},{bestRect.Height}).");
             }
             else
             {
-                Debug.Log("Keyboard outline selection: no valid candidate selected.");
+                VerboseLog("Keyboard outline selection: no valid candidate selected.");
             }
 
             return bestRect;
