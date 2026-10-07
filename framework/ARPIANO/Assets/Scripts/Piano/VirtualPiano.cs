@@ -28,6 +28,10 @@ namespace ARPIANO.Scripts.Piano
         [SerializeField] private KeyboardSize keyboardSize = KeyboardSize.Keys88;
         //private KeyboardSize keyboardSize = KeyboardSize.Keys88;
 
+        private bool hasRequestedRange;
+        private int requestedFirstMidiNote;
+        private int requestedWhiteKeyCount;
+
         private readonly Dictionary<int, PianoKey> keys = new();
         private LessonPlayer lessonPlayer;
         private bool lessonEventsSubscribed;
@@ -78,7 +82,6 @@ namespace ARPIANO.Scripts.Piano
 
             Debug.Log($"VirtualPiano Awake: whiteKeyPrefab={(whiteKeyPrefab!=null?whiteKeyPrefab.name:"null")}, blackKeyPrefab={(blackKeyPrefab!=null?blackKeyPrefab.name:"null")}");
 
-            GenerateKeyboard();
         }
 
         private struct KeyDefinition
@@ -109,26 +112,61 @@ namespace ARPIANO.Scripts.Piano
         };
 
         
+        public bool GenerateVisibleRange(int firstMidiNote, int whiteKeyCount)
+        {
+            if (whiteKeyCount <= 0)
+                return false;
+
+            hasRequestedRange = true;
+            requestedFirstMidiNote = Mathf.Clamp(firstMidiNote, 21, 108);
+            requestedWhiteKeyCount = whiteKeyCount;
+            GenerateKeyboard();
+            return keys.Count > 0;
+        }
+
         private void GenerateKeyboard()
         {
-            keys.Clear();
-
-            float whiteX = 0f;
-
             int keyCount = (int)keyboardSize;
             int startMidi;
-            if (keyboardSize == KeyboardSize.Keys88)
+            int endMidi;
+
+            if (hasRequestedRange)
             {
-                // standard 88-key piano A0..C8
-                startMidi = 21;
+                startMidi = requestedFirstMidiNote;
+                int remainingWhiteKeys = requestedWhiteKeyCount;
+                endMidi = startMidi;
+                while (endMidi <= 108 && remainingWhiteKeys > 0)
+                {
+                    if (!IsBlackKey(endMidi))
+                        remainingWhiteKeys--;
+                    endMidi++;
+                }
+                endMidi = Mathf.Min(108, endMidi - 1);
             }
             else
             {
-                // center around middle C (60)
-                startMidi = Mathf.Clamp(60 - keyCount / 2, 0, 127 - keyCount + 1);
+                if (keyboardSize == KeyboardSize.Keys88)
+                {
+                    // standard 88-key piano A0..C8
+                    startMidi = 21;
+                }
+                else
+                {
+                    // center around middle C (60)
+                    startMidi = Mathf.Clamp(60 - keyCount / 2, 0, 127 - keyCount + 1);
+                }
+
+                endMidi = startMidi + keyCount - 1;
             }
 
-            int endMidi = startMidi + keyCount - 1;
+            foreach (PianoKey existingKey in keys.Values)
+            {
+                if (existingKey != null)
+                    Destroy(existingKey.gameObject);
+            }
+            keys.Clear();
+
+            float whiteX = 0f;
 
             for (int midi = startMidi; midi <= endMidi; midi++)
             {
