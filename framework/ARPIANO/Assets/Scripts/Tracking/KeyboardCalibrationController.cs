@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using ARPIANO.Scripts.Piano;
 
 namespace ARPIANO.Scripts.Tracking
 {
@@ -134,6 +135,25 @@ namespace ARPIANO.Scripts.Tracking
             Debug.Log("========================================");
             Debug.Log("Keyboard calibration completed.");
             Debug.Log("========================================");
+
+            VirtualPiano virtualPiano = FindAnyObjectByType<VirtualPiano>();
+
+            if (virtualPiano != null)
+            {
+                bool generated = virtualPiano.GenerateVisibleRange(
+                    calibration.FirstMidiNote,
+                    calibration.WhiteKeyCount);
+
+                Debug.Log(
+                    $"Virtual piano generation after calibration: " +
+                    $"success={generated}, " +
+                    $"keys={virtualPiano.Keys.Count}");
+            }
+            else
+            {
+                Debug.LogError(
+                    "KeyboardCalibrationController: VirtualPiano was not found.");
+            }
 
             if (calibrateButton != null)
             {

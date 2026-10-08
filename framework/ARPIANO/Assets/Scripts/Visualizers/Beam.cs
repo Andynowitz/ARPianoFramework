@@ -1,8 +1,5 @@
-// Beam.cs
-// Purpose: Represents a visual beam that corresponds to a piano note, showing its duration and timing in the ARPIANO system.
-
 using UnityEngine;
-using ARPIANO.Scripts.Models;
+using UnityEngine.UI;
 
 namespace ARPIANO.Scripts.Visualizers
 {
@@ -10,40 +7,66 @@ namespace ARPIANO.Scripts.Visualizers
     {
         public int MidiNumber { get; private set; }
 
-        private float fallingSpeed = 3f;
-        private Vector3 fallDirection = Vector3.down;
+        private RectTransform rectTransform;
+        private Image image;
 
-        private PianoNote note;
+        private Vector2 startPosition;
+        private Vector2 targetPosition;
+        private Vector2 direction;
 
+        private float speed = 400f;
         private bool active;
 
-        public void Initialize(int midi)
-        {
-            Initialize(midi, Vector3.down);
-        }
-
-        public void Initialize(int midi, Vector3 direction)
+        public void Initialize(
+            int midi,
+            Vector2 start,
+            Vector2 target)
         {
             MidiNumber = midi;
-            fallDirection = direction.normalized;
+
+            startPosition = start;
+            targetPosition = target;
+
+            direction = (targetPosition - startPosition).normalized;
+
+            rectTransform = GetComponent<RectTransform>();
+            image = GetComponent<Image>();
+
+            if (rectTransform == null)
+            {
+                Debug.LogError("Beam requires a RectTransform.");
+                return;
+            }
+
+            rectTransform.anchoredPosition = startPosition;
+
             active = true;
         }
 
         private void Update()
         {
-            if (!active)
+            if (!active || rectTransform == null)
                 return;
 
-            // fall relative to key orientation rather than camera
-            transform.Translate(fallDirection * fallingSpeed * Time.deltaTime, Space.World);
+            Vector2 currentPosition = rectTransform.anchoredPosition;
+
+            currentPosition += direction * speed * Time.deltaTime;
+
+            rectTransform.anchoredPosition = currentPosition;
+
+            if (Vector2.Dot(
+                    targetPosition - currentPosition,
+                    direction) <= 0f)
+            {
+                rectTransform.anchoredPosition = targetPosition;
+                Finish();
+            }
         }
 
         public void Finish()
         {
             active = false;
-
             Destroy(gameObject);
         }
-
     }
 }
