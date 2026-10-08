@@ -10,57 +10,135 @@ namespace ARPIANO.Scripts.Visualizers
         private RectTransform rectTransform;
         private Image image;
 
-        private Vector2 startPosition;
-        private Vector2 targetPosition;
         private Vector2 direction;
+        private Vector2 targetPosition;
 
         private float speed = 400f;
+        private float width;
+        private float spawnTime;
+        private float noteStartTime;
+        private float noteEndTime;
+        private Vector2 spawnPosition;
+
         private bool active;
 
         public void Initialize(
             int midi,
             Vector2 start,
-            Vector2 target)
+            Vector2 target,
+            float width,
+            float beamLength,
+            Color color,
+            float rotationAngle,
+            float spawnTime,
+            float noteStart,
+            float duration,
+            float movementSpeed)
         {
             MidiNumber = midi;
 
-            startPosition = start;
+            this.width = width;
+            this.spawnTime = spawnTime;
+            noteStartTime = noteStart;
+            noteEndTime = noteStart + duration;
+            speed = movementSpeed;
+            spawnPosition = start;
             targetPosition = target;
 
-            direction = (targetPosition - startPosition).normalized;
+            direction =
+                (target - start).normalized;
 
-            rectTransform = GetComponent<RectTransform>();
-            image = GetComponent<Image>();
+            rectTransform =
+                GetComponent<RectTransform>();
+
+            image =
+                GetComponent<Image>();
 
             if (rectTransform == null)
             {
-                Debug.LogError("Beam requires a RectTransform.");
+                Debug.LogError(
+                    "Beam requires a RectTransform.");
                 return;
             }
 
-            rectTransform.anchoredPosition = startPosition;
+            if (image == null)
+            {
+                Debug.LogError(
+                    "Beam requires an Image component.");
+                return;
+            }
+
+            rectTransform.sizeDelta =
+                new Vector2(
+                    width,
+                    beamLength);
+
+            rectTransform.localRotation =
+                Quaternion.Euler(
+                    0f,
+                    0f,
+                    rotationAngle);
+
+            image.color = color;
+
+            /*
+             * The pivot is at the leading/front edge of the beam.
+             *
+             * The beam extends behind its movement direction,
+             * so it cannot cross the keyboard edge before its
+             * front reaches that edge.
+             */
+            rectTransform.pivot =
+                new Vector2(
+                    0.5f,
+                    0f);
+
+            rectTransform.anchoredPosition =
+                start;
 
             active = true;
         }
 
-        private void Update()
+        public void UpdateForLessonTime(float currentTime)
         {
             if (!active || rectTransform == null)
                 return;
 
-            Vector2 currentPosition = rectTransform.anchoredPosition;
+            float elapsedSinceSpawn =
+                Mathf.Max(
+                    0f,
+                    currentTime - spawnTime);
 
-            currentPosition += direction * speed * Time.deltaTime;
-
-            rectTransform.anchoredPosition = currentPosition;
-
-            if (Vector2.Dot(
-                    targetPosition - currentPosition,
-                    direction) <= 0f)
+            if (currentTime < noteStartTime)
             {
-                rectTransform.anchoredPosition = targetPosition;
-                Finish();
+                rectTransform.anchoredPosition =
+                    spawnPosition +
+                    direction *
+                    speed *
+                    elapsedSinceSpawn;
             }
+            else
+            {
+                rectTransform.anchoredPosition =
+                    targetPosition;
+            }
+
+            float remainingDuration =
+                Mathf.Clamp(
+                    noteEndTime - currentTime,
+                    0f,
+                    noteEndTime - noteStartTime);
+
+            float visibleLength =
+                remainingDuration * speed;
+
+            rectTransform.sizeDelta =
+                new Vector2(
+                    width,
+                    visibleLength);
+
+            if (currentTime >= noteEndTime)
+                Finish();
         }
 
         public void Finish()

@@ -19,8 +19,9 @@ namespace ARPIANO.Scripts.Lessons
         public event Action<PianoNote> NoteStopped;
 
         public float GetCurrentTime => currentTime;
-
-
+        public Lesson CurrentLesson => currentLesson;
+        public bool IsPlaying => isPlaying;
+        
         public void LoadLesson(Lesson lesson)
         {
             currentLesson = lesson;
