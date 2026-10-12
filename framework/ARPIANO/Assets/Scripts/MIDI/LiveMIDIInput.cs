@@ -30,23 +30,61 @@ namespace ARPIANO.Scripts.MIDI
             public LiveMIDINoteEvent Note;
         }
 
+        private sealed class PendingControlChange
+        {
+            public int Channel;
+            public int Controller;
+            public int Value;
+        }
+
         private readonly ConcurrentQueue<PendingNoteEvent> pendingEvents =
             new ConcurrentQueue<PendingNoteEvent>();
+        private readonly ConcurrentQueue<PendingControlChange>
+            pendingControlChanges =
+            new ConcurrentQueue<PendingControlChange>();
+
+        public event Action<MidiEvent> RawMidiEventReceived;
 
         // Key: MIDI channel and note number.
-        // Value: most recent Note On data for that active note.
-        private readonly Dictionary<(int Channel, int NoteNumber), LiveMIDINoteEvent>
-            activeNotes = new Dictionary<(int Channel, int NoteNumber), LiveMIDINoteEvent>();
+        // Value: physically held note instances, in press order.
+        private readonly Dictionary<
+            (int Channel, int NoteNumber),
+            List<LiveMIDINoteEvent>> activeNotes =
+            new Dictionary<
+                (int Channel, int NoteNumber),
+                List<LiveMIDINoteEvent>>();
+
+        private readonly Dictionary<
+            (int Channel, int NoteNumber),
+            List<LiveMIDINoteEvent>> sustainedNotes =
+            new Dictionary<
+                (int Channel, int NoteNumber),
+                List<LiveMIDINoteEvent>>();
+
+        private readonly Dictionary<int, bool> sustainByChannel =
+            new Dictionary<int, bool>();
 
         private InputDevice inputDevice;
 
         public event Action<LiveMIDINoteEvent> NotePressed;
         public event Action<LiveMIDINoteEvent> NoteReleased;
+        public event Action AllNotesReleased;
 
         public bool IsConnected => inputDevice != null;
 
         // Read-only view of the notes currently held.
-        public IReadOnlyCollection<LiveMIDINoteEvent> ActiveNotes => activeNotes.Values;
+        public IReadOnlyCollection<LiveMIDINoteEvent> ActiveNotes
+        {
+            get
+            {
+                var notes = new List<LiveMIDINoteEvent>();
+
+                foreach (var entries in activeNotes.Values)
+                    notes.AddRange(entries);
+
+                return notes;
+            }
+        }
 
         private void Start()
         {
@@ -73,6 +111,7 @@ namespace ARPIANO.Scripts.MIDI
                 inputDevice.EventReceived += OnMidiEventReceived;
                 inputDevice.StartEventsListening();
 
+
                 Debug.Log($"[Live MIDI] Listening to: {inputDevice.Name}");
             }
             catch (Exception exception)
@@ -88,6 +127,9 @@ namespace ARPIANO.Scripts.MIDI
         {
             // The callback may run on a background thread.
             // Capture MIDI data here; update Unity state in Update().
+
+            RawMidiEventReceived?.Invoke(e.Event);
+            
             if (e.Event is NoteOnEvent noteOn)
             {
                 int velocity = (int)noteOn.Velocity;
@@ -112,10 +154,38 @@ namespace ARPIANO.Scripts.MIDI
                         (int)noteOff.Channel)
                 });
             }
+            else if (e.Event is ControlChangeEvent controlChange &&
+                     (int)controlChange.ControlNumber == 64)
+            {
+                pendingControlChanges.Enqueue(new PendingControlChange
+                {
+                    Channel = (int)controlChange.Channel,
+                    Controller = 64,
+                    Value = (int)controlChange.ControlValue
+                });
+            }
         }
 
         private void Update()
         {
+            while (pendingControlChanges.TryDequeue(
+                       out var controlChange))
+            {
+                if (controlChange.Controller == 64)
+                {
+                    bool wasDown =
+                        IsSustainDown(controlChange.Channel);
+
+                    bool isDown =
+                        controlChange.Value >= 64;
+
+                    sustainByChannel[controlChange.Channel] = isDown;
+
+                    if (wasDown && !isDown)
+                        ReleaseSustainedNotes(controlChange.Channel);
+                }
+            }
+
             while (pendingEvents.TryDequeue(out var pending))
             {
                 var note = pending.Note;
@@ -123,26 +193,50 @@ namespace ARPIANO.Scripts.MIDI
 
                 if (pending.IsNoteOn)
                 {
-                    // Ignore duplicate Note On messages while the same
-                    // channel/pitch pair is already active.
-                    if (!activeNotes.ContainsKey(key))
+                    if (!activeNotes.TryGetValue(key, out var entries))
                     {
-                        activeNotes.Add(key, note);
-                        NotePressed?.Invoke(note);
-
-                        Debug.Log(
-                            $"[Live MIDI] PRESSED: MIDI {note.NoteNumber}, " +
-                            $"velocity {note.Velocity}, channel {note.Channel}");
-                            
-                        Debug.Log($"[Live MIDI] Active notes: {activeNotes.Count}");
+                        entries = new List<LiveMIDINoteEvent>();
+                        activeNotes.Add(key, entries);
                     }
+
+                    entries.Add(note);
+                    NotePressed?.Invoke(note);
+
+                    Debug.Log(
+                        $"[Live MIDI] PRESSED: MIDI {note.NoteNumber}, " +
+                        $"velocity {note.Velocity}, channel {note.Channel}");
                 }
                 else
                 {
-                    if (activeNotes.TryGetValue(key, out var activeNote))
+                    if (activeNotes.TryGetValue(key, out var entries) &&
+                        entries.Count > 0)
                     {
-                        activeNotes.Remove(key);
-                        NoteReleased?.Invoke(activeNote);
+                        int lastIndex = entries.Count - 1;
+                        LiveMIDINoteEvent activeNote = entries[lastIndex];
+                        entries.RemoveAt(lastIndex);
+
+                        if (entries.Count == 0)
+                            activeNotes.Remove(key);
+
+                        if (IsSustainDown(note.Channel))
+                        {
+                            if (!sustainedNotes.TryGetValue(
+                                    key,
+                                    out var sustainedEntries))
+                            {
+                                sustainedEntries =
+                                    new List<LiveMIDINoteEvent>();
+                                sustainedNotes.Add(
+                                    key,
+                                    sustainedEntries);
+                            }
+
+                            sustainedEntries.Add(activeNote);
+                        }
+                        else
+                        {
+                            NoteReleased?.Invoke(activeNote);
+                        }
 
                         Debug.Log(
                             $"[Live MIDI] RELEASED: MIDI {note.NoteNumber}, " +
@@ -154,14 +248,70 @@ namespace ARPIANO.Scripts.MIDI
 
         public bool IsNoteActive(int channel, int noteNumber)
         {
-            return activeNotes.ContainsKey((channel, noteNumber));
+            return activeNotes.TryGetValue(
+                       (channel, noteNumber),
+                       out var entries) &&
+                entries.Count > 0;
         }
 
         private void OnDestroy()
         {
+            ReleaseAllNotes();
             DisposeInputDevice();
             pendingEvents.Clear();
+            pendingControlChanges.Clear();
             activeNotes.Clear();
+            sustainedNotes.Clear();
+            sustainByChannel.Clear();
+        }
+
+        private bool IsSustainDown(int channel)
+        {
+            return sustainByChannel.TryGetValue(
+                       channel,
+                       out bool isDown) &&
+                isDown;
+        }
+
+        private void ReleaseSustainedNotes(int channel)
+        {
+            var keys = new List<(int Channel, int NoteNumber)>();
+
+            foreach (var pair in sustainedNotes)
+            {
+                if (pair.Key.Channel == channel)
+                    keys.Add(pair.Key);
+            }
+
+            foreach (var key in keys)
+            {
+                if (!sustainedNotes.TryGetValue(
+                        key,
+                        out var entries))
+                    continue;
+
+                foreach (var note in entries)
+                    NoteReleased?.Invoke(note);
+
+                sustainedNotes.Remove(key);
+            }
+        }
+
+        private void ReleaseAllNotes()
+        {
+            foreach (var entries in activeNotes.Values)
+            {
+                foreach (var note in entries)
+                    NoteReleased?.Invoke(note);
+            }
+
+            foreach (var entries in sustainedNotes.Values)
+            {
+                foreach (var note in entries)
+                    NoteReleased?.Invoke(note);
+            }
+
+            AllNotesReleased?.Invoke();
         }
 
         private void DisposeInputDevice()

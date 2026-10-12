@@ -22,8 +22,8 @@ namespace ARPIANO.Scripts.Visualizers
         [Header("Beam")]
         [SerializeField] private float beamStartOffset = 100f;
 
-        [SerializeField] private float whiteBeamWidth = 200f;
-        [SerializeField] private float blackBeamWidth = 150f;
+        [SerializeField] private float whiteBeamWidth = 300f;
+        [SerializeField] private float blackBeamWidth = 220f;
 
         [SerializeField] private float beamSpeed = 400f;
 
@@ -46,7 +46,7 @@ namespace ARPIANO.Scripts.Visualizers
         // Live MIDI input
         private LiveMIDIInput liveMIDIInput;
 
-        private readonly Dictionary<(int Channel, int NoteNumber), Beam> liveBeams = new();
+        private readonly Dictionary<LiveMIDINoteEvent, Beam> liveBeams = new();
 
         private bool eventsSubscribed;
         private bool mappingCreated;
@@ -422,6 +422,9 @@ namespace ARPIANO.Scripts.Visualizers
 
             liveMIDIInput.NoteReleased -= OnLiveNoteReleased;
             liveMIDIInput.NoteReleased += OnLiveNoteReleased;
+
+            liveMIDIInput.AllNotesReleased -= OnAllLiveNotesReleased;
+            liveMIDIInput.AllNotesReleased += OnAllLiveNotesReleased;
         }
 
         private void UnsubscribeFromLiveMIDI()
@@ -431,6 +434,7 @@ namespace ARPIANO.Scripts.Visualizers
 
             liveMIDIInput.NotePressed -= OnLiveNotePressed;
             liveMIDIInput.NoteReleased -= OnLiveNoteReleased;
+            liveMIDIInput.AllNotesReleased -= OnAllLiveNotesReleased;
         }
 
         private void OnLiveNotePressed(LiveMIDINoteEvent note)
@@ -440,10 +444,7 @@ namespace ARPIANO.Scripts.Visualizers
                 beamPrefab == null)
                 return;
 
-            var key = (note.Channel, note.NoteNumber);
-
-            // Don't create duplicate beams for an already-held key.
-            if (liveBeams.ContainsKey(key))
+            if (liveBeams.ContainsKey(note))
                 return;
 
             float normalizedX =
@@ -500,7 +501,7 @@ namespace ARPIANO.Scripts.Visualizers
                 beamAngle,
                 beamSpeed);
 
-            liveBeams.Add(key, beam);
+            liveBeams.Add(note, beam);
             allLiveBeams.Add(beam);
 
             Debug.Log(
@@ -509,9 +510,7 @@ namespace ARPIANO.Scripts.Visualizers
 
         private void OnLiveNoteReleased(LiveMIDINoteEvent note)
         {
-            var key = (note.Channel, note.NoteNumber);
-
-            if (!liveBeams.TryGetValue(key, out Beam beam))
+            if (!liveBeams.TryGetValue(note, out Beam beam))
                 return;
 
             // Stop growing and start moving upward.
@@ -519,11 +518,23 @@ namespace ARPIANO.Scripts.Visualizers
                 beam.ReleaseLive();
 
             // The key is no longer held, so it can be pressed again.
-            liveBeams.Remove(key);
+            liveBeams.Remove(note);
 
             Debug.Log(
                 $"[Live Beam] Released MIDI {note.NoteNumber}, channel {note.Channel}"
             );
+        }
+
+        private void OnAllLiveNotesReleased()
+        {
+            foreach (Beam beam in liveBeams.Values)
+            {
+                if (beam != null)
+                    beam.Finish();
+            }
+
+            liveBeams.Clear();
+            allLiveBeams.Clear();
         }
 
         public void NoteStarted(PianoNote note)

@@ -1,0 +1,24 @@
+\begin{thebibliography}{1}
+
+\bibitem{everyman14}
+Richard Everyman, Mary Major, Joe Bloggs, and Jane Roe.
+\newblock {Can a Machine Frobnicate?}
+\newblock In {\em Proc. International Foo Filter Symposium}, 2014.
+
+\bibitem{luo2020bokeh}
+Xianrui Luo, Juewen Peng, Ke~Xian, Zijin Wu, and Zhiguo Cao.
+\newblock Bokeh rendering from defocus estimation.
+\newblock In {\em Proc. European Conf. on Computer Vision (ECCV)}, pages
+  245--261. Springer, 2020.
+
+\bibitem{roe17}
+John Roe and Jane Doe.
+\newblock {The Frobnicatable Foo Filter and its Applications}.
+\newblock In {\em Proc. Conference on Frobnication}, 2017.
+
+\bibitem{smith14}
+John Smith.
+\newblock {Frobnication Tutorial}.
+\newblock {\em Journal of Theoretical Foo Filters}, 12(4):23--42, 2014.
+
+\end{thebibliography}
