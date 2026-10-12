@@ -33,8 +33,6 @@ namespace ARPIANO.Scripts.Tracking
         private Image leftLine;
 
         private const string CalibrationSavedKey = "ARPiano_Calibration_Saved";
-        private const string CalibrationVersionKey = "ARPiano_Calibration_Version";
-        private const int CurrentCalibrationVersion = 2;
         private const string TopLeftXKey = "ARPiano_TopLeftX";
         private const string TopLeftYKey = "ARPiano_TopLeftY";
         private const string TopRightXKey = "ARPiano_TopRightX";
@@ -58,6 +56,8 @@ namespace ARPIANO.Scripts.Tracking
                 calibrateButton.onClick.AddListener(Calibrate);
             }
 
+            PlayerPrefs.DeleteKey("ARPiano_Calibration_Saved");
+            
             CreateRectangle();
         }
 
@@ -341,9 +341,6 @@ namespace ARPIANO.Scripts.Tracking
             Debug.Log("KeyboardCalibrationController: ResetCalibration() called.");
 
             IsCalibrated = false;
-            PlayerPrefs.DeleteKey(CalibrationSavedKey);
-            PlayerPrefs.DeleteKey(CalibrationVersionKey);
-            PlayerPrefs.Save();
 
             SetRectangleColor(rectangleColor);
             
@@ -396,35 +393,12 @@ namespace ARPIANO.Scripts.Tracking
         
         private void SaveCalibration()
         {
-            if (calibration == null ||
-                !IsValidCalibration(calibration.GetImageCorners()))
-            {
-                Debug.LogError(
-                    "Keyboard calibration was not saved because its " +
-                    "corners are invalid.");
-                return;
-            }
-
-            if (!HasCalibrationUI(topLeft) ||
-                !HasCalibrationUI(topRight) ||
-                !HasCalibrationUI(bottomRight) ||
-                !HasCalibrationUI(bottomLeft))
-            {
-                Debug.LogError(
-                    "Keyboard calibration was not saved because one or " +
-                    "more calibration points are missing.");
-                return;
-            }
-
             SavePoint(TopLeftXKey, TopLeftYKey, topLeft);
             SavePoint(TopRightXKey, TopRightYKey, topRight);
             SavePoint(BottomRightXKey, BottomRightYKey, bottomRight);
             SavePoint(BottomLeftXKey, BottomLeftYKey, bottomLeft);
 
             PlayerPrefs.SetInt(CalibrationSavedKey, 1);
-            PlayerPrefs.SetInt(
-                CalibrationVersionKey,
-                CurrentCalibrationVersion);
             PlayerPrefs.Save();
 
             Debug.Log("Keyboard calibration positions saved.");
@@ -432,76 +406,26 @@ namespace ARPIANO.Scripts.Tracking
 
         private void SavePoint(string xKey, string yKey, RectTransform point)
         {
-            KeyboardCalibrationUI pointUI =
-                point != null
-                    ? point.GetComponent<KeyboardCalibrationUI>()
-                    : null;
-
-            if (pointUI == null)
-                return;
-
-            Vector2 imagePoint = pointUI.GetImagePoint();
-            PlayerPrefs.SetFloat(xKey, imagePoint.x);
-            PlayerPrefs.SetFloat(yKey, imagePoint.y);
+            PlayerPrefs.SetFloat(xKey, point.anchoredPosition.x);
+            PlayerPrefs.SetFloat(yKey, point.anchoredPosition.y);
         }
 
         
         private void LoadCalibration()
         {
-            if (PlayerPrefs.GetInt(CalibrationSavedKey, 0) != 1 ||
-                PlayerPrefs.GetInt(
-                    CalibrationVersionKey,
-                    0) != CurrentCalibrationVersion)
+            if (PlayerPrefs.GetInt(CalibrationSavedKey, 0) != 1)
             {
-                if (PlayerPrefs.GetInt(CalibrationSavedKey, 0) == 1)
-                {
-                    PlayerPrefs.DeleteKey(CalibrationSavedKey);
-                    PlayerPrefs.DeleteKey(CalibrationVersionKey);
-                    PlayerPrefs.Save();
-                    SetInitialPositions();
-                }
-
                 Debug.Log("No saved keyboard calibration found.");
                 return;
             }
 
-            if (!TryLoadPoint(
-                    TopLeftXKey,
-                    TopLeftYKey,
-                    topLeft) ||
-                !TryLoadPoint(
-                    TopRightXKey,
-                    TopRightYKey,
-                    topRight) ||
-                !TryLoadPoint(
-                    BottomRightXKey,
-                    BottomRightYKey,
-                    bottomRight) ||
-                !TryLoadPoint(
-                    BottomLeftXKey,
-                    BottomLeftYKey,
-                    bottomLeft))
-            {
-                PlayerPrefs.DeleteKey(CalibrationSavedKey);
-                PlayerPrefs.DeleteKey(CalibrationVersionKey);
-                PlayerPrefs.Save();
-                SetInitialPositions();
-                Debug.LogWarning(
-                    "Saved keyboard calibration is incomplete or invalid.");
-                return;
-            }
+            LoadPoint(TopLeftXKey, TopLeftYKey, topLeft);
+            LoadPoint(TopRightXKey, TopRightYKey, topRight);
+            LoadPoint(BottomRightXKey, BottomRightYKey, bottomRight);
+            LoadPoint(BottomLeftXKey, BottomLeftYKey, bottomLeft);
 
-            if (calibration == null ||
-                !IsValidCalibration(calibration.GetImageCorners()))
-            {
-                PlayerPrefs.DeleteKey(CalibrationSavedKey);
-                PlayerPrefs.DeleteKey(CalibrationVersionKey);
-                PlayerPrefs.Save();
-                SetInitialPositions();
-                Debug.LogWarning(
-                    "Saved keyboard calibration geometry is invalid.");
-                return;
-            }
+            // Synchronize the model with the restored UI points.
+            UpdateCalibrationFromUI();
 
             UpdateRectangle();
 
@@ -512,84 +436,48 @@ namespace ARPIANO.Scripts.Tracking
             Debug.Log("Saved keyboard calibration restored.");
         }
 
-        private void SetInitialPositions()
+        private void UpdateCalibrationFromUI()
         {
-            topLeft?.GetComponent<KeyboardCalibrationUI>()
-                ?.SetInitialPositionForCalibration();
-            topRight?.GetComponent<KeyboardCalibrationUI>()
-                ?.SetInitialPositionForCalibration();
-            bottomRight?.GetComponent<KeyboardCalibrationUI>()
-                ?.SetInitialPositionForCalibration();
-            bottomLeft?.GetComponent<KeyboardCalibrationUI>()
-                ?.SetInitialPositionForCalibration();
+            UpdateModelPoint(topLeft, point => calibration.TopLeft = point);
+            UpdateModelPoint(topRight, point => calibration.TopRight = point);
+            UpdateModelPoint(bottomRight, point => calibration.BottomRight = point);
+            UpdateModelPoint(bottomLeft, point => calibration.BottomLeft = point);
         }
 
-        private bool HasCalibrationUI(RectTransform point)
+        private void UpdateModelPoint(
+            RectTransform point,
+            System.Action<Vector2> applyPoint)
         {
-            return point != null &&
-                point.GetComponent<KeyboardCalibrationUI>() != null;
-        }
-
-        private bool IsValidCalibration(Vector2[] corners)
-        {
-            if (corners == null || corners.Length != 4)
-                return false;
-
-            for (int i = 0; i < corners.Length; i++)
-            {
-                Vector2 point = corners[i];
-
-                if (float.IsNaN(point.x) ||
-                    float.IsNaN(point.y) ||
-                    float.IsInfinity(point.x) ||
-                    float.IsInfinity(point.y) ||
-                    point.x < 0f ||
-                    point.x > 1280f ||
-                    point.y < 0f ||
-                    point.y > 720f)
-                    return false;
-            }
-
-            float width =
-                Vector2.Distance(corners[0], corners[1]);
-
-            float height =
-                Vector2.Distance(corners[0], corners[3]);
-
-            return width > 1f && height > 1f;
-        }
-
-        private bool TryLoadPoint(
-            string xKey,
-            string yKey,
-            RectTransform point)
-        {
-            if (point == null)
-                return false;
-
-            if (!PlayerPrefs.HasKey(xKey) ||
-                !PlayerPrefs.HasKey(yKey))
-                return false;
-
-            Vector2 imagePoint = new Vector2(
-                PlayerPrefs.GetFloat(xKey),
-                PlayerPrefs.GetFloat(yKey));
-
-            if (float.IsNaN(imagePoint.x) ||
-                float.IsNaN(imagePoint.y) ||
-                float.IsInfinity(imagePoint.x) ||
-                float.IsInfinity(imagePoint.y) ||
-                imagePoint.x < 0f ||
-                imagePoint.x > 1280f ||
-                imagePoint.y < 0f ||
-                imagePoint.y > 720f)
-                return false;
+            if (point == null || calibration == null)
+                return;
 
             KeyboardCalibrationUI pointUI =
                 point.GetComponent<KeyboardCalibrationUI>();
 
-            return pointUI != null &&
-                pointUI.SetImagePoint(imagePoint);
+            if (pointUI == null)
+                return;
+
+            // Convert the saved UI position into the model's image coordinates.
+            Rect rect = pointUI.GetComponent<RectTransform>().parent
+                .GetComponent<RectTransform>().rect;
+
+            float u = Mathf.InverseLerp(
+                rect.xMin, rect.xMax, point.anchoredPosition.x);
+
+            float v = Mathf.InverseLerp(
+                rect.yMin, rect.yMax, point.anchoredPosition.y);
+
+            applyPoint(new Vector2(u * 1280f, (1f - v) * 720f));
+        }
+
+        private void LoadPoint(string xKey, string yKey, RectTransform point)
+        {
+            if (point == null)
+                return;
+
+            point.anchoredPosition = new Vector2(
+                PlayerPrefs.GetFloat(xKey),
+                PlayerPrefs.GetFloat(yKey));
         }
 
     }
