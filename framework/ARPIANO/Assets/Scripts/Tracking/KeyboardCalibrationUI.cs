@@ -63,6 +63,11 @@ namespace ARPIANO.Scripts.Tracking
             }
         }
 
+        public void SetInitialPositionForCalibration()
+        {
+            SetInitialPosition();
+        }
+
         private void UpdatePosition(PointerEventData eventData)
         {
             if (webcamRect == null || calibration == null)
@@ -157,6 +162,9 @@ namespace ARPIANO.Scripts.Tracking
 
         private Vector2 GetCurrentImagePoint()
         {
+            if (webcamRect == null || pointRect == null)
+                return Vector2.zero;
+
             Rect rect = webcamRect.rect;
 
             float u = Mathf.InverseLerp(
@@ -172,6 +180,29 @@ namespace ARPIANO.Scripts.Tracking
             return new Vector2(
                 u * 1280f,
                 (1f - v) * 720f);
+        }
+
+        public Vector2 GetImagePoint()
+        {
+            return GetCurrentImagePoint();
+        }
+
+        public bool SetImagePoint(Vector2 imagePoint)
+        {
+            if (webcamRect == null || pointRect == null)
+                return false;
+
+            Rect rect = webcamRect.rect;
+            float u = Mathf.Clamp01(imagePoint.x / 1280f);
+            float v = Mathf.Clamp01(1f - imagePoint.y / 720f);
+
+            Vector2 localPoint = new Vector2(
+                Mathf.Lerp(rect.xMin, rect.xMax, u),
+                Mathf.Lerp(rect.yMin, rect.yMax, v));
+
+            pointRect.anchoredPosition = localPoint;
+            UpdateCalibration(localPoint, rect);
+            return true;
         }
 
         private void ApplyCalibrationPoint(Vector2 imagePoint)
