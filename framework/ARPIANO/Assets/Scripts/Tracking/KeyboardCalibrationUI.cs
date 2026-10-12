@@ -31,6 +31,7 @@ namespace ARPIANO.Scripts.Tracking
             pointImage = GetComponent<Image>();
         }
 
+        
         private void Start()
         {
             if (webcamRect == null)
@@ -38,7 +39,6 @@ namespace ARPIANO.Scripts.Tracking
                 Debug.LogError(
                     $"KeyboardCalibrationUI ({pointType}): " +
                     "Webcam Rect is not assigned.");
-
                 return;
             }
 
@@ -47,13 +47,21 @@ namespace ARPIANO.Scripts.Tracking
                 Debug.LogError(
                     $"KeyboardCalibrationUI ({pointType}): " +
                     "KeyboardCalibration is not assigned.");
-
                 return;
             }
 
-            SetInitialPosition();
+            // Only use default positions when no saved calibration exists.
+            if (PlayerPrefs.GetInt("ARPiano_Calibration_Saved", 0) != 1)
+            {
+                SetInitialPosition();
+            }
+            else
+            {
+                // The controller restores the saved positions.
+                // Synchronize this point with the calibration model.
+                UpdateCalibration(pointRect.anchoredPosition, webcamRect.rect);
+            }
         }
-
 
         private void UpdatePosition(PointerEventData eventData)
         {
@@ -227,6 +235,18 @@ namespace ARPIANO.Scripts.Tracking
             {
                 pointImage.raycastTarget = false;
             }
+
+            Debug.Log($"Lock() called on {name}");
+        }
+
+        public void Unlock()
+        {
+            if (pointImage != null)
+            {
+                pointImage.raycastTarget = true;
+            }
+
+            Debug.Log($"Unlock() called on {name}");
         }
 
     }

@@ -17,6 +17,8 @@ namespace ARPIANO.Scripts.Tracking
 
         [Header("UI")]
         [SerializeField] private Button calibrateButton;
+        [SerializeField] private GameObject calibrationPanel;
+        [SerializeField] private GameObject modeSelectionPanel;
 
         [Header("Rectangle")]
         [SerializeField] private Color rectangleColor = Color.green;
@@ -30,6 +32,21 @@ namespace ARPIANO.Scripts.Tracking
         private Image bottomLine;
         private Image leftLine;
 
+        private const string CalibrationSavedKey = "ARPiano_Calibration_Saved";
+        private const string TopLeftXKey = "ARPiano_TopLeftX";
+        private const string TopLeftYKey = "ARPiano_TopLeftY";
+        private const string TopRightXKey = "ARPiano_TopRightX";
+        private const string TopRightYKey = "ARPiano_TopRightY";
+        private const string BottomRightXKey = "ARPiano_BottomRightX";
+        private const string BottomRightYKey = "ARPiano_BottomRightY";
+        private const string BottomLeftXKey = "ARPiano_BottomLeftX";
+        private const string BottomLeftYKey = "ARPiano_BottomLeftY";
+
+        private void Start()
+        {
+            LoadCalibration();
+        }
+
         private void Awake()
         {
             canvasRect = GetComponent<RectTransform>();
@@ -39,6 +56,8 @@ namespace ARPIANO.Scripts.Tracking
                 calibrateButton.onClick.AddListener(Calibrate);
             }
 
+            PlayerPrefs.DeleteKey("ARPiano_Calibration_Saved");
+            
             CreateRectangle();
         }
 
@@ -57,8 +76,6 @@ namespace ARPIANO.Scripts.Tracking
 
         public void Calibrate()
         {
-            IsCalibrated = true;
-
             LockPoint(topLeft);
             LockPoint(topRight);
             LockPoint(bottomRight);
@@ -161,6 +178,18 @@ namespace ARPIANO.Scripts.Tracking
             }
 
             UpdateRectangle();
+
+            // Calibration completed successfully.
+            IsCalibrated = true;
+
+            SaveCalibration();
+
+            if (calibrationPanel != null)
+                calibrationPanel.SetActive(false);
+
+            if (modeSelectionPanel != null)
+                modeSelectionPanel.SetActive(true);
+
         }
 
         private void LogPoint(
@@ -305,6 +334,150 @@ namespace ARPIANO.Scripts.Tracking
             {
                 calibrationUI.Lock();
             }
+        }
+
+        public void ResetCalibration()
+        {
+            Debug.Log("KeyboardCalibrationController: ResetCalibration() called.");
+
+            IsCalibrated = false;
+
+            SetRectangleColor(rectangleColor);
+            
+            UnlockPoint(topLeft);
+            UnlockPoint(topRight);
+            UnlockPoint(bottomRight);
+            UnlockPoint(bottomLeft);
+
+            if (calibrateButton != null)
+                calibrateButton.interactable = true;
+
+            SetPointColor(topLeft, calibratedColor);
+            SetPointColor(topRight, calibratedColor);
+            SetPointColor(bottomRight, calibratedColor);
+            SetPointColor(bottomLeft, calibratedColor);
+
+            UpdateRectangle();
+
+            Debug.Log($"Reset complete. IsCalibrated={IsCalibrated}");
+        }
+
+        private void UnlockPoint(RectTransform point)
+        {
+            if (point == null)
+                return;
+
+            KeyboardCalibrationUI pointUI =
+                point.GetComponent<KeyboardCalibrationUI>();
+
+            if (pointUI != null)
+                pointUI.Unlock();
+        }
+
+        
+        private void SetRectangleColor(Color color)
+        {
+            if (topLine != null)
+                topLine.color = color;
+
+            if (rightLine != null)
+                rightLine.color = color;
+
+            if (bottomLine != null)
+                bottomLine.color = color;
+
+            if (leftLine != null)
+                leftLine.color = color;
+        }
+
+        
+        private void SaveCalibration()
+        {
+            SavePoint(TopLeftXKey, TopLeftYKey, topLeft);
+            SavePoint(TopRightXKey, TopRightYKey, topRight);
+            SavePoint(BottomRightXKey, BottomRightYKey, bottomRight);
+            SavePoint(BottomLeftXKey, BottomLeftYKey, bottomLeft);
+
+            PlayerPrefs.SetInt(CalibrationSavedKey, 1);
+            PlayerPrefs.Save();
+
+            Debug.Log("Keyboard calibration positions saved.");
+        }
+
+        private void SavePoint(string xKey, string yKey, RectTransform point)
+        {
+            PlayerPrefs.SetFloat(xKey, point.anchoredPosition.x);
+            PlayerPrefs.SetFloat(yKey, point.anchoredPosition.y);
+        }
+
+        
+        private void LoadCalibration()
+        {
+            if (PlayerPrefs.GetInt(CalibrationSavedKey, 0) != 1)
+            {
+                Debug.Log("No saved keyboard calibration found.");
+                return;
+            }
+
+            LoadPoint(TopLeftXKey, TopLeftYKey, topLeft);
+            LoadPoint(TopRightXKey, TopRightYKey, topRight);
+            LoadPoint(BottomRightXKey, BottomRightYKey, bottomRight);
+            LoadPoint(BottomLeftXKey, BottomLeftYKey, bottomLeft);
+
+            // Synchronize the model with the restored UI points.
+            UpdateCalibrationFromUI();
+
+            UpdateRectangle();
+
+            // Restore the calibrated state, lock the points,
+            // regenerate the piano, and show the mode selection.
+            Calibrate();
+
+            Debug.Log("Saved keyboard calibration restored.");
+        }
+
+        private void UpdateCalibrationFromUI()
+        {
+            UpdateModelPoint(topLeft, point => calibration.TopLeft = point);
+            UpdateModelPoint(topRight, point => calibration.TopRight = point);
+            UpdateModelPoint(bottomRight, point => calibration.BottomRight = point);
+            UpdateModelPoint(bottomLeft, point => calibration.BottomLeft = point);
+        }
+
+        private void UpdateModelPoint(
+            RectTransform point,
+            System.Action<Vector2> applyPoint)
+        {
+            if (point == null || calibration == null)
+                return;
+
+            KeyboardCalibrationUI pointUI =
+                point.GetComponent<KeyboardCalibrationUI>();
+
+            if (pointUI == null)
+                return;
+
+            // Convert the saved UI position into the model's image coordinates.
+            Rect rect = pointUI.GetComponent<RectTransform>().parent
+                .GetComponent<RectTransform>().rect;
+
+            float u = Mathf.InverseLerp(
+                rect.xMin, rect.xMax, point.anchoredPosition.x);
+
+            float v = Mathf.InverseLerp(
+                rect.yMin, rect.yMax, point.anchoredPosition.y);
+
+            applyPoint(new Vector2(u * 1280f, (1f - v) * 720f));
+        }
+
+        private void LoadPoint(string xKey, string yKey, RectTransform point)
+        {
+            if (point == null)
+                return;
+
+            point.anchoredPosition = new Vector2(
+                PlayerPrefs.GetFloat(xKey),
+                PlayerPrefs.GetFloat(yKey));
         }
 
     }

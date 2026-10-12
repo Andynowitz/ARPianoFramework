@@ -4,6 +4,8 @@ using ARPIANO.Scripts.Models;
 using ARPIANO.Scripts.Tracking;
 using System.Collections.Generic;
 using ARPIANO.Scripts.Lessons;
+using ARPIANO.Scripts.MIDI;
+using System;
 
 namespace ARPIANO.Scripts.Visualizers
 {
@@ -20,8 +22,8 @@ namespace ARPIANO.Scripts.Visualizers
         [Header("Beam")]
         [SerializeField] private float beamStartOffset = 100f;
 
-        [SerializeField] private float whiteBeamWidth = 30f;
-        [SerializeField] private float blackBeamWidth = 20f;
+        [SerializeField] private float whiteBeamWidth = 200f;
+        [SerializeField] private float blackBeamWidth = 150f;
 
         [SerializeField] private float beamSpeed = 400f;
 
@@ -38,7 +40,13 @@ namespace ARPIANO.Scripts.Visualizers
         private KeyboardNoteMapper noteMapper;
 
         private readonly Dictionary<PianoNote, Beam> activeBeams = new();
+        private readonly List<Beam> allLiveBeams = new();
         private readonly HashSet<PianoNote> scheduledBeams = new();
+
+        // Live MIDI input
+        private LiveMIDIInput liveMIDIInput;
+
+        private readonly Dictionary<(int Channel, int NoteNumber), Beam> liveBeams = new();
 
         private bool eventsSubscribed;
         private bool mappingCreated;
@@ -47,6 +55,8 @@ namespace ARPIANO.Scripts.Visualizers
         private void Awake()
         {
             lessonPlayer = FindAnyObjectByType<LessonPlayer>();
+
+            liveMIDIInput = FindAnyObjectByType<LiveMIDIInput>();
 
             if (calibration == null)
                 calibration = FindAnyObjectByType<KeyboardCalibration>();
@@ -84,6 +94,7 @@ namespace ARPIANO.Scripts.Visualizers
                 "to LessonPlayer events.");
 
             TrySubscribe();
+            SubscribeToLiveMIDI();
         }
 
         private void Update()
@@ -110,6 +121,8 @@ namespace ARPIANO.Scripts.Visualizers
             ScheduleUpcomingBeams();
 
             UpdateActiveBeams(currentTime);
+
+            UpdateLiveBeams();
         }
 
         private void UpdateActiveBeams(float currentTime)
@@ -118,6 +131,26 @@ namespace ARPIANO.Scripts.Visualizers
             {
                 if (beam != null)
                     beam.UpdateForLessonTime(currentTime);
+            }
+        }
+
+        private void UpdateLiveBeams()
+        {
+            for (int i = allLiveBeams.Count - 1; i >= 0; i--)
+            {
+                Beam beam = allLiveBeams[i];
+
+                if (beam == null)
+                {
+                    allLiveBeams.RemoveAt(i);
+                    continue;
+                }
+
+                beam.UpdateForLive(Time.deltaTime);
+
+                // Remove beams that have finished their animation.
+                if (beam == null || !beam.gameObject.activeInHierarchy)
+                    allLiveBeams.RemoveAt(i);
             }
         }
 
@@ -376,6 +409,123 @@ namespace ARPIANO.Scripts.Visualizers
                 $"currentTime={lessonPlayer.GetCurrentTime:F2}");
         }
 
+        private void SubscribeToLiveMIDI()
+        {
+            if (liveMIDIInput == null)
+                liveMIDIInput = FindAnyObjectByType<LiveMIDIInput>();
+
+            if (liveMIDIInput == null)
+                return;
+
+            liveMIDIInput.NotePressed -= OnLiveNotePressed;
+            liveMIDIInput.NotePressed += OnLiveNotePressed;
+
+            liveMIDIInput.NoteReleased -= OnLiveNoteReleased;
+            liveMIDIInput.NoteReleased += OnLiveNoteReleased;
+        }
+
+        private void UnsubscribeFromLiveMIDI()
+        {
+            if (liveMIDIInput == null)
+                return;
+
+            liveMIDIInput.NotePressed -= OnLiveNotePressed;
+            liveMIDIInput.NoteReleased -= OnLiveNoteReleased;
+        }
+
+        private void OnLiveNotePressed(LiveMIDINoteEvent note)
+        {
+            if (!mappingCreated || webcamRect == null ||
+                homography == null || noteMapper == null ||
+                beamPrefab == null)
+                return;
+
+            var key = (note.Channel, note.NoteNumber);
+
+            // Don't create duplicate beams for an already-held key.
+            if (liveBeams.ContainsKey(key))
+                return;
+
+            float normalizedX =
+                noteMapper.GetNormalizedCenter(note.NoteNumber);
+
+            if (normalizedX < 0f)
+            {
+                Debug.LogWarning(
+                    $"[Live Beam] MIDI note {note.NoteNumber} is outside the calibrated range.");
+                return;
+            }
+
+            Vector2 imageTarget =
+                homography.NormalizedToImage(
+                    new Vector2(normalizedX, 0f));
+
+            Vector2 targetPosition =
+                ImageToWebcamLocalPosition(imageTarget);
+
+            float beamAngle = GetKeyboardTiltAngle();
+
+            bool isBlackKey = IsBlackKey(note.NoteNumber);
+
+            float beamWidth =
+                isBlackKey ? blackBeamWidth : whiteBeamWidth;
+
+            Color beamColor =
+                isBlackKey ? blackBeamColor : whiteBeamColor;
+
+            Beam beam = Instantiate(beamPrefab, webcamRect);
+
+            RectTransform beamRect =
+                beam.GetComponent<RectTransform>();
+
+            if (beamRect == null)
+            {
+                Destroy(beam.gameObject);
+                Debug.LogError("[Live Beam] Beam prefab has no RectTransform.");
+                return;
+            }
+
+            beamRect.SetParent(webcamRect, false);
+            beamRect.SetAsLastSibling();
+            beamRect.anchorMin = new Vector2(0.5f, 0.5f);
+            beamRect.anchorMax = new Vector2(0.5f, 0.5f);
+
+            beam.gameObject.SetActive(true);
+
+            beam.InitializeForLive(
+                note.NoteNumber,
+                targetPosition,
+                beamWidth,
+                beamColor,
+                beamAngle,
+                beamSpeed);
+
+            liveBeams.Add(key, beam);
+            allLiveBeams.Add(beam);
+
+            Debug.Log(
+                $"[Live Beam] Created MIDI {note.NoteNumber}, channel {note.Channel}");
+        }
+
+        private void OnLiveNoteReleased(LiveMIDINoteEvent note)
+        {
+            var key = (note.Channel, note.NoteNumber);
+
+            if (!liveBeams.TryGetValue(key, out Beam beam))
+                return;
+
+            // Stop growing and start moving upward.
+            if (beam != null)
+                beam.ReleaseLive();
+
+            // The key is no longer held, so it can be pressed again.
+            liveBeams.Remove(key);
+
+            Debug.Log(
+                $"[Live Beam] Released MIDI {note.NoteNumber}, channel {note.Channel}"
+            );
+        }
+
         public void NoteStarted(PianoNote note)
         {
             if (activeBeams.TryGetValue(
@@ -468,6 +618,17 @@ namespace ARPIANO.Scripts.Visualizers
 
                 eventsSubscribed = false;
             }
+
+            UnsubscribeFromLiveMIDI();
+
+            foreach (Beam beam in liveBeams.Values)
+            {   
+                if (beam != null)
+                    beam.Finish();
+            }
+
+            liveBeams.Clear();
+            allLiveBeams.Clear();
         }
 
         private void OnDestroy()
