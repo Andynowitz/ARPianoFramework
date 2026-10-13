@@ -76,3 +76,4 @@ old/.continue/
 
 # Local FFmpeg executable (obtain separately)
 /framework/ARPIANO/ffmpeg.exe
+/framework/ARPIANO/Recordings/*.mid
