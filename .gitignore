@@ -65,3 +65,5 @@ BuildAndroid/
 BuildWindows/
 old/.continue/
 .continue/
+# FluidSynth SoundFont (download separately; too large for normal Git)
+/framework/ARPIANO/Assets/StreamingAssets/FluidSynth/FluidR3_GM.sf2

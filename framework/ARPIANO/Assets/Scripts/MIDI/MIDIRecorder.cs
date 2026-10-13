@@ -11,6 +11,10 @@ using Melanchall.DryWetMidi.Common;
 using TMPro;
 using UnityEngine.InputSystem;
 using ARPIANO.Scripts.Recording;
+using System.Threading;
+using FFmpegUnityBind2;
+using Process = System.Diagnostics.Process;
+using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 
 namespace ARPIANO.Scripts.MIDI
 
@@ -67,6 +71,48 @@ namespace ARPIANO.Scripts.MIDI
         private bool isRecording;
         private bool isCountdownRunning;
         private long recordingStartTimestamp;
+
+        private sealed class AudioMuxCallbacks : IFFmpegCallbacksHandler
+        {
+            private readonly Action<bool> onFinished;
+
+            public AudioMuxCallbacks(Action<bool> onFinished)
+            {
+                this.onFinished = onFinished;
+            }
+
+            public void OnStart(long executionId) { }
+
+            public void OnLog(long executionId, string message)
+            {
+                UnityEngine.Debug.Log($"[MIDI Recorder] FFmpeg: {message}");
+            }
+
+            public void OnWarning(long executionId, string message)
+            {
+                UnityEngine.Debug.LogWarning($"[MIDI Recorder] FFmpeg: {message}");
+            }
+
+            public void OnError(long executionId, string message)
+            {
+                UnityEngine.Debug.LogError($"[MIDI Recorder] FFmpeg: {message}");
+            }
+
+            public void OnSuccess(long executionId)
+            {
+                onFinished?.Invoke(true);
+            }
+
+            public void OnFail(long executionId)
+            {
+                onFinished?.Invoke(false);
+            }
+
+            public void OnCanceled(long executionId)
+            {
+                onFinished?.Invoke(false);
+            }
+        }
 
         private void Awake()
         {
@@ -327,24 +373,190 @@ namespace ARPIANO.Scripts.MIDI
             StartCoroutine(SaveRecordingCoroutine(filename));
         }
 
+        private string GetRecordingsDirectory()
+        {
+            string projectDirectory = Directory.GetParent(Application.dataPath).FullName;
+            return Path.Combine(projectDirectory, "Recordings");
+        }
+
+        private static string QuoteArgument(string value)
+        {
+            return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+
+        private IEnumerator RenderMidiToWav(string midiPath, string wavPath)
+        {
+            string runtimeDirectory =
+                Path.Combine(Application.streamingAssetsPath, "FluidSynth");
+
+            string fluidsynthPath = Path.Combine(runtimeDirectory, "fluidsynth.exe");
+            string soundfontPath = Path.Combine(runtimeDirectory, "FluidR3_GM.sf2");
+
+            if (!File.Exists(fluidsynthPath) || !File.Exists(soundfontPath))
+            {
+                UnityEngine.Debug.LogError(
+                    $"[MIDI Recorder] FluidSynth runtime or SoundFont is missing: " +
+                    $"{runtimeDirectory}");
+
+                SetStatus("Audio rendering files are missing. Check the Console.");
+                yield break;
+            }
+
+            if (!File.Exists(midiPath))
+            {
+                UnityEngine.Debug.LogError(
+                    $"[MIDI Recorder] MIDI file not found: {midiPath}");
+
+                SetStatus("Could not render audio: MIDI file is missing.");
+                yield break;
+            }
+
+            if (File.Exists(wavPath))
+                File.Delete(wavPath);
+
+            string arguments =
+                "-ni -F " + QuoteArgument(wavPath) +
+                " -r 44100 " +
+                QuoteArgument(soundfontPath) + " " +
+                QuoteArgument(midiPath);
+
+            using (var process = new Process())
+            {
+                process.StartInfo = new ProcessStartInfo
+                {
+                    FileName = fluidsynthPath,
+                    Arguments = arguments,
+                    WorkingDirectory = runtimeDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                        UnityEngine.Debug.Log($"[FluidSynth] {e.Data}");
+                };
+
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                        UnityEngine.Debug.LogWarning($"[FluidSynth] {e.Data}");
+                };
+
+                bool started;
+
+                try
+                {
+                    started = process.Start();
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError(
+                        $"[MIDI Recorder] Could not start FluidSynth: {ex}");
+
+                    SetStatus("Could not start audio rendering.");
+                    yield break;
+                }
+
+                if (!started)
+                {
+                    SetStatus("Could not start audio rendering.");
+                    yield break;
+                }
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                while (!process.HasExited)
+                    yield return null;
+
+                if (process.ExitCode != 0 ||
+                    !File.Exists(wavPath) ||
+                    new FileInfo(wavPath).Length == 0)
+                {
+                    UnityEngine.Debug.LogError(
+                        $"[MIDI Recorder] FluidSynth failed. Exit code: {process.ExitCode}");
+
+                    SetStatus("Audio rendering failed. Check the Console.");
+                    yield break;
+                }
+            }
+        }
+
+        private IEnumerator MuxAudioIntoVideo(
+            string videoPath,
+            string wavPath,
+            string outputPath)
+        {
+            bool finished = false;
+            bool succeeded = false;
+
+            string temporaryOutput = outputPath + ".muxing.mp4";
+
+            if (File.Exists(temporaryOutput))
+                File.Delete(temporaryOutput);
+
+            string arguments =
+                "-y -i " + QuoteArgument(videoPath) +
+                " -i " + QuoteArgument(wavPath) +
+                " -map 0:v:0 -map 1:a:0" +
+                " -c:v copy -c:a aac -b:a 192k" +
+                " -af apad -shortest " +
+                QuoteArgument(temporaryOutput);
+
+            FFmpeg.Execute(
+                arguments,
+                new AudioMuxCallbacks(success =>
+                {
+                    succeeded = success;
+                    finished = true;
+                }));
+
+            while (!finished)
+                yield return null;
+
+            if (!succeeded ||
+                !File.Exists(temporaryOutput) ||
+                new FileInfo(temporaryOutput).Length == 0)
+            {
+                if (File.Exists(temporaryOutput))
+                    File.Delete(temporaryOutput);
+
+                UnityEngine.Debug.LogError(
+                    "[MIDI Recorder] FFmpeg audio muxing failed.");
+
+                SetStatus("Adding audio to video failed. Check the Console.");
+                yield break;
+            }
+
+            if (File.Exists(outputPath))
+                File.Delete(outputPath);
+
+            File.Move(temporaryOutput, outputPath);
+        }
+
         private IEnumerator SaveRecordingCoroutine(string filename)
         {
             isSaving = true;
 
-            if (pendingSaveMidi)
+            string recordingsDirectory = GetRecordingsDirectory();
+            Directory.CreateDirectory(recordingsDirectory);
+
+            string midiPath = Path.Combine(recordingsDirectory, filename + ".mid");
+            string finalVideoPath = Path.Combine(recordingsDirectory, filename + ".mp4");
+
+            if (pendingSaveMidi && !SaveMidiFile(filename))
             {
-                if (!SaveMidiFile(filename))
-                {
-                    isSaving = false;
-                    yield break;
-                }
+                isSaving = false;
+                yield break;
             }
 
             if (pendingSaveVideo)
             {
                 SetStatus("Finishing video encoding...");
 
-                // Wait for capture finalization and FFmpeg encoding.
                 while (screenMp4Recorder != null &&
                     screenMp4Recorder.IsProcessing)
                 {
@@ -360,14 +572,58 @@ namespace ARPIANO.Scripts.MIDI
                     yield break;
                 }
 
-                Debug.Log($"[MIDI Recorder] Video saved: {videoPath}");
+                if (pendingSaveMidi)
+                {
+                    string wavPath = Path.Combine(
+                        recordingsDirectory, filename + ".audio-temp.wav");
+
+                    SetStatus("Rendering piano audio...");
+
+                    yield return RenderMidiToWav(midiPath, wavPath);
+
+                    if (!File.Exists(wavPath) ||
+                        new FileInfo(wavPath).Length == 0)
+                    {
+                        isSaving = false;
+                        yield break;
+                    }
+
+                    string muxedPath = Path.Combine(
+                        recordingsDirectory, filename + ".mux-temp.mp4");
+
+                    SetStatus("Adding piano audio to video...");
+
+                    yield return MuxAudioIntoVideo(
+                        videoPath, wavPath, muxedPath);
+
+                    if (!File.Exists(muxedPath) ||
+                        new FileInfo(muxedPath).Length == 0)
+                    {
+                        isSaving = false;
+                        yield break;
+                    }
+
+                    if (File.Exists(finalVideoPath))
+                        File.Delete(finalVideoPath);
+
+                    File.Move(muxedPath, finalVideoPath);
+
+                    if (File.Exists(videoPath))
+                        File.Delete(videoPath);
+
+                    if (File.Exists(wavPath))
+                        File.Delete(wavPath);
+                }
+
+                UnityEngine.Debug.Log(
+                    $"[MIDI Recorder] Video saved: {finalVideoPath}");
             }
 
             if (savePanel != null)
                 savePanel.SetActive(false);
 
             if (pendingSaveMidi && pendingSaveVideo)
-                SetStatus($"Saved MIDI and video as '{filename}'.");
+                SetStatus($"Saved MIDI and video with piano audio as '{filename}'.");
             else if (pendingSaveMidi)
                 SetStatus($"Saved MIDI as '{filename}.mid'.");
             else if (pendingSaveVideo)
