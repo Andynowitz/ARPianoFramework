@@ -67,3 +67,10 @@ old/.continue/
 .continue/
 # FluidSynth SoundFont (download separately; too large for normal Git)
 /framework/ARPIANO/Assets/StreamingAssets/FluidSynth/FluidR3_GM.sf2
+
+# Local FFmpeg executable (obtain separately)
+/framework/ARPIANO/ffmpeg.exe
+
+# Local piano test recordings
+/framework/ARPIANO/Recordings/*.mp4
+/framework/ARPIANO/Recordings/Video/
