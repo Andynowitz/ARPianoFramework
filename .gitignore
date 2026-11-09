@@ -1,5 +1,5 @@
-# FluidSynth SoundFont (download separately; too large for normal Git)
-/framework/ARPIANO/Assets/StreamingAssets/FluidSynth/FluidR3_GM.sf2
+# FluidSynth runtime (download separately; binaries and SoundFont are not committed)
+/framework/ARPIANO/Assets/StreamingAssets/FluidSynth/
 
 # Local FFmpeg executable (obtain separately)
 /framework/ARPIANO/ffmpeg.exe
@@ -9,3 +9,18 @@
 /framework/ARPIANO/Recordings/Video/
 # Generated MIDI test recordings
 /framework/ARPIANO/Recordings/*.mid
+
+# Unity-generated files and local editor settings
+/framework/ARPIANO/[Ll]ibrary/
+/framework/ARPIANO/[Tt]emp/
+/framework/ARPIANO/[Oo]bj/
+/framework/ARPIANO/[Ll]ogs/
+/framework/ARPIANO/[Uu]ser[Ss]ettings/
+/framework/ARPIANO/[Bb]uild/
+/framework/ARPIANO/[Bb]uilds/
+
+# IDE-generated solution and project files
+/framework/ARPIANO/*.sln
+/framework/ARPIANO/*.csproj
+/framework/ARPIANO/*.user
+/framework/ARPIANO/*.suo
