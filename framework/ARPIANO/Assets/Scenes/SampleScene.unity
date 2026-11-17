@@ -2144,6 +2144,7 @@ GameObject:
   - component: {fileID: 414637659}
   - component: {fileID: 414637661}
   - component: {fileID: 414637660}
+  - component: {fileID: 2106000010}
   m_Layer: 5
   m_Name: LessonPanel
   m_TagString: Untagged
@@ -4858,7 +4859,7 @@ GameObject:
   - component: {fileID: 1769424888}
   - component: {fileID: 1769424887}
   m_Layer: 5
-  m_Name: Button (Legacy)
+  m_Name: StartLessonButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -5524,7 +5525,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: CHOOSE SONG
+  m_Text: START LESSON
 --- !u!222 &1966765227
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -6654,3 +6655,19 @@ MonoBehaviour:
   m_hasFontAssetChanged: 0
   m_baseMaterial: {fileID: 0}
   m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!114 &2106000010
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 414637658}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 545a15906cf34b2489ba0cc6c5395980, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARPIANO.Scripts.UI.LessonSelectionUI
+  lessonDropdown: {fileID: 0}
+  startLessonButton: {fileID: 1769424887}
+  statusText: {fileID: 0}
+  lessonPlayer: {fileID: 1000000003}
