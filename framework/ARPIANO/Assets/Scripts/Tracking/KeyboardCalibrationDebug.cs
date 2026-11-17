@@ -7,16 +7,6 @@ namespace ARPIANO.Scripts.Tracking
         [Header("Calibration")]
         [SerializeField] private KeyboardCalibration calibration;
 
-        [Header("Debug MIDI Notes")]
-        [SerializeField] private int[] testMidiNotes =
-        {
-            48, // C3
-            60, // C4
-            66, // F#4
-            72, // C5
-            84  // C6
-        };
-
         private KeyboardHomography homography;
         private KeyboardNoteMapper noteMapper;
 
@@ -63,21 +53,37 @@ namespace ARPIANO.Scripts.Tracking
 
         private void LogCalibrationPoints()
         {
-            Debug.Log(
-                $"TopLeft C3: {calibration.TopLeft}");
+            string firstNote =
+                Models.PianoNote.GetNoteName(calibration.FirstMidiNote);
+
+            string lastNote =
+                Models.PianoNote.GetNoteName(calibration.LastMidiNote);
 
             Debug.Log(
-                $"TopRight C6: {calibration.TopRight}");
+                $"TopLeft {firstNote}: {calibration.TopLeft}");
 
             Debug.Log(
-                $"BottomRight C6: {calibration.BottomRight}");
+                $"TopRight {lastNote}: {calibration.TopRight}");
 
             Debug.Log(
-                $"BottomLeft C3: {calibration.BottomLeft}");
+                $"BottomRight {lastNote}: {calibration.BottomRight}");
+
+            Debug.Log(
+                $"BottomLeft {firstNote}: {calibration.BottomLeft}");
         }
 
         private void LogTestNotes()
         {
+            int first = calibration.FirstMidiNote;
+            int last = calibration.LastMidiNote;
+
+            int[] testMidiNotes =
+            {
+                first,
+                (first + last) / 2,
+                last
+            };
+
             foreach (int midiNote in testMidiNotes)
             {
                 float normalizedX =

@@ -1,6 +1,9 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
+using System.Collections.Generic;
 using ARPIANO.Scripts.Piano;
+using ARPIANO.Scripts.Models;
 
 namespace ARPIANO.Scripts.Tracking
 {
@@ -20,12 +23,21 @@ namespace ARPIANO.Scripts.Tracking
         [SerializeField] private GameObject calibrationPanel;
         [SerializeField] private GameObject modeSelectionPanel;
 
+        [Header("Keyboard Range UI")]
+        [SerializeField] private TMP_Dropdown startKeyDropdown;
+        [SerializeField] private TMP_Dropdown endKeyDropdown;
+        [SerializeField] private TMP_Text startKeyLabel;
+        [SerializeField] private TMP_Text endKeyLabel;
+        [SerializeField] private TMP_Text instructionsText;
+
         [Header("Rectangle")]
         [SerializeField] private Color rectangleColor = Color.green;
         [SerializeField] private Color calibratedColor = Color.red;
         [SerializeField] private float rectangleThickness = 4f;
 
         public bool IsCalibrated { get; private set; }        private RectTransform canvasRect;
+
+        private bool updatingRangeDropdowns;
 
         private Image topLine;
         private Image rightLine;
@@ -35,6 +47,8 @@ namespace ARPIANO.Scripts.Tracking
         private const string CalibrationSavedKey = "ARPiano_Calibration_Saved";
         private const string CalibrationVersionKey = "ARPiano_Calibration_Version";
         private const int CurrentCalibrationVersion = 2;
+        private const string RangeFirstMidiKey = "ARPiano_Range_FirstMidi";
+        private const string RangeLastMidiKey = "ARPiano_Range_LastMidi";
         private const string TopLeftXKey = "ARPiano_TopLeftX";
         private const string TopLeftYKey = "ARPiano_TopLeftY";
         private const string TopRightXKey = "ARPiano_TopRightX";
@@ -58,6 +72,8 @@ namespace ARPIANO.Scripts.Tracking
                 calibrateButton.onClick.AddListener(Calibrate);
             }
 
+            SetupRangeDropdowns();
+
             CreateRectangle();
         }
 
@@ -76,6 +92,8 @@ namespace ARPIANO.Scripts.Tracking
 
         public void Calibrate()
         {
+            ApplySelectedRange();
+
             LockPoint(topLeft);
             LockPoint(topRight);
             LockPoint(bottomRight);
@@ -97,19 +115,19 @@ namespace ARPIANO.Scripts.Tracking
             Debug.Log("========================================");
 
             LogPoint(
-                "TopLeft C3",
+                $"TopLeft {PianoNote.GetNoteName(calibration.FirstMidiNote)}",
                 calibration.TopLeft);
 
             LogPoint(
-                "TopRight C6",
+                $"TopRight {PianoNote.GetNoteName(calibration.LastMidiNote)}",
                 calibration.TopRight);
 
             LogPoint(
-                "BottomRight C6",
+                $"BottomRight {PianoNote.GetNoteName(calibration.LastMidiNote)}",
                 calibration.BottomRight);
 
             LogPoint(
-                "BottomLeft C3",
+                $"BottomLeft {PianoNote.GetNoteName(calibration.FirstMidiNote)}",
                 calibration.BottomLeft);
 
             float width = Vector2.Distance(
@@ -176,6 +194,8 @@ namespace ARPIANO.Scripts.Tracking
             {
                 calibrateButton.interactable = false;
             }
+
+            SetRangeControlsInteractable(false);
 
             UpdateRectangle();
 
@@ -343,6 +363,7 @@ namespace ARPIANO.Scripts.Tracking
             IsCalibrated = false;
             PlayerPrefs.DeleteKey(CalibrationSavedKey);
             PlayerPrefs.DeleteKey(CalibrationVersionKey);
+            ClearSavedRange();
             PlayerPrefs.Save();
 
             SetRectangleColor(rectangleColor);
@@ -354,6 +375,8 @@ namespace ARPIANO.Scripts.Tracking
 
             if (calibrateButton != null)
                 calibrateButton.interactable = true;
+
+            SetRangeControlsInteractable(true);
 
             SetPointColor(topLeft, calibratedColor);
             SetPointColor(topRight, calibratedColor);
@@ -421,6 +444,8 @@ namespace ARPIANO.Scripts.Tracking
             SavePoint(BottomRightXKey, BottomRightYKey, bottomRight);
             SavePoint(BottomLeftXKey, BottomLeftYKey, bottomLeft);
 
+            SaveRange();
+
             PlayerPrefs.SetInt(CalibrationSavedKey, 1);
             PlayerPrefs.SetInt(
                 CalibrationVersionKey,
@@ -448,6 +473,8 @@ namespace ARPIANO.Scripts.Tracking
         
         private void LoadCalibration()
         {
+            LoadSavedRange();
+
             if (PlayerPrefs.GetInt(CalibrationSavedKey, 0) != 1 ||
                 PlayerPrefs.GetInt(
                     CalibrationVersionKey,
@@ -457,6 +484,7 @@ namespace ARPIANO.Scripts.Tracking
                 {
                     PlayerPrefs.DeleteKey(CalibrationSavedKey);
                     PlayerPrefs.DeleteKey(CalibrationVersionKey);
+                    ClearSavedRange();
                     PlayerPrefs.Save();
                     SetInitialPositions();
                 }
@@ -484,6 +512,7 @@ namespace ARPIANO.Scripts.Tracking
             {
                 PlayerPrefs.DeleteKey(CalibrationSavedKey);
                 PlayerPrefs.DeleteKey(CalibrationVersionKey);
+                ClearSavedRange();
                 PlayerPrefs.Save();
                 SetInitialPositions();
                 Debug.LogWarning(
@@ -496,6 +525,7 @@ namespace ARPIANO.Scripts.Tracking
             {
                 PlayerPrefs.DeleteKey(CalibrationSavedKey);
                 PlayerPrefs.DeleteKey(CalibrationVersionKey);
+                ClearSavedRange();
                 PlayerPrefs.Save();
                 SetInitialPositions();
                 Debug.LogWarning(
@@ -590,6 +620,232 @@ namespace ARPIANO.Scripts.Tracking
 
             return pointUI != null &&
                 pointUI.SetImagePoint(imagePoint);
+        }
+
+        private void SetupRangeDropdowns()
+        {
+            List<string> options = new List<string>();
+
+            for (int midi = KeyboardCalibration.MinMidiNote;
+                 midi <= KeyboardCalibration.MaxMidiNote;
+                 midi++)
+            {
+                options.Add(
+                    $"{PianoNote.GetNoteName(midi)} ({midi})");
+            }
+
+            if (startKeyDropdown != null)
+            {
+                startKeyDropdown.ClearOptions();
+                startKeyDropdown.AddOptions(options);
+                startKeyDropdown.onValueChanged.AddListener(OnStartKeyChanged);
+            }
+
+            if (endKeyDropdown != null)
+            {
+                endKeyDropdown.ClearOptions();
+                endKeyDropdown.AddOptions(options);
+                endKeyDropdown.onValueChanged.AddListener(OnEndKeyChanged);
+            }
+
+            int first = calibration != null
+                ? calibration.FirstMidiNote
+                : KeyboardCalibration.DefaultFirstMidiNote;
+
+            int last = calibration != null
+                ? calibration.LastMidiNote
+                : KeyboardCalibration.DefaultLastMidiNote;
+
+            ApplyRange(first, last, false);
+        }
+
+        private void OnStartKeyChanged(int value)
+        {
+            if (updatingRangeDropdowns)
+                return;
+
+            ApplyRange(
+                DropdownToMidi(
+                    startKeyDropdown,
+                    KeyboardCalibration.DefaultFirstMidiNote),
+                DropdownToMidi(
+                    endKeyDropdown,
+                    KeyboardCalibration.DefaultLastMidiNote),
+                true);
+        }
+
+        private void OnEndKeyChanged(int value)
+        {
+            if (updatingRangeDropdowns)
+                return;
+
+            ApplyRange(
+                DropdownToMidi(
+                    startKeyDropdown,
+                    KeyboardCalibration.DefaultFirstMidiNote),
+                DropdownToMidi(
+                    endKeyDropdown,
+                    KeyboardCalibration.DefaultLastMidiNote),
+                true);
+        }
+
+        private void ApplyRange(int first, int last, bool updateCalibration)
+        {
+            if (!KeyboardCalibration.IsValidRange(first, last))
+            {
+                first = Mathf.Clamp(
+                    first,
+                    KeyboardCalibration.MinMidiNote,
+                    KeyboardCalibration.MaxMidiNote - 1);
+
+                last = Mathf.Clamp(
+                    last,
+                    first + 1,
+                    KeyboardCalibration.MaxMidiNote);
+            }
+
+            updatingRangeDropdowns = true;
+
+            SetDropdownMidi(startKeyDropdown, first);
+            SetDropdownMidi(endKeyDropdown, last);
+
+            updatingRangeDropdowns = false;
+
+            if (updateCalibration && calibration != null)
+                calibration.SetRange(first, last);
+
+            UpdateRangeInstructions(first, last);
+        }
+
+        private void ApplySelectedRange()
+        {
+            if (startKeyDropdown == null ||
+                endKeyDropdown == null)
+                return;
+
+            ApplyRange(
+                DropdownToMidi(
+                    startKeyDropdown,
+                    KeyboardCalibration.DefaultFirstMidiNote),
+                DropdownToMidi(
+                    endKeyDropdown,
+                    KeyboardCalibration.DefaultLastMidiNote),
+                true);
+        }
+
+        private static int DropdownToMidi(
+            TMP_Dropdown dropdown,
+            int fallbackMidi)
+        {
+            if (dropdown == null)
+                return fallbackMidi;
+
+            return Mathf.Clamp(
+                KeyboardCalibration.MinMidiNote + dropdown.value,
+                KeyboardCalibration.MinMidiNote,
+                KeyboardCalibration.MaxMidiNote);
+        }
+
+        private static void SetDropdownMidi(
+            TMP_Dropdown dropdown,
+            int midi)
+        {
+            if (dropdown == null || dropdown.options.Count == 0)
+                return;
+
+            int index = Mathf.Clamp(
+                midi - KeyboardCalibration.MinMidiNote,
+                0,
+                dropdown.options.Count - 1);
+
+            if (dropdown.value == index)
+                return;
+
+            dropdown.value = index;
+            dropdown.RefreshShownValue();
+        }
+
+        private void UpdateRangeInstructions(int first, int last)
+        {
+            string firstNote = PianoNote.GetNoteName(first);
+            string lastNote = PianoNote.GetNoteName(last);
+
+            if (startKeyLabel != null)
+            {
+                startKeyLabel.text =
+                    $"Start key (left edge): {firstNote}";
+            }
+
+            if (endKeyLabel != null)
+            {
+                endKeyLabel.text =
+                    $"End key (right edge): {lastNote}";
+            }
+
+            if (instructionsText != null)
+            {
+                instructionsText.text =
+                    $"Place the two left calibration points on the " +
+                    $"left edge of {firstNote} and the two right " +
+                    $"points on the right edge of {lastNote}.";
+            }
+        }
+
+        private void SetRangeControlsInteractable(bool interactable)
+        {
+            if (startKeyDropdown != null)
+                startKeyDropdown.interactable = interactable;
+
+            if (endKeyDropdown != null)
+                endKeyDropdown.interactable = interactable;
+        }
+
+        private void SaveRange()
+        {
+            if (calibration == null)
+                return;
+
+            PlayerPrefs.SetInt(
+                RangeFirstMidiKey,
+                calibration.FirstMidiNote);
+
+            PlayerPrefs.SetInt(
+                RangeLastMidiKey,
+                calibration.LastMidiNote);
+        }
+
+        private void LoadSavedRange()
+        {
+            if (!PlayerPrefs.HasKey(RangeFirstMidiKey) ||
+                !PlayerPrefs.HasKey(RangeLastMidiKey))
+                return;
+
+            int first = PlayerPrefs.GetInt(
+                RangeFirstMidiKey,
+                KeyboardCalibration.DefaultFirstMidiNote);
+
+            int last = PlayerPrefs.GetInt(
+                RangeLastMidiKey,
+                KeyboardCalibration.DefaultLastMidiNote);
+
+            if (!KeyboardCalibration.IsValidRange(first, last))
+            {
+                ClearSavedRange();
+
+                Debug.LogWarning(
+                    "Saved keyboard range is invalid; using the " +
+                    "default range.");
+
+                return;
+            }
+
+            ApplyRange(first, last, true);
+        }
+
+        private static void ClearSavedRange()
+        {
+            PlayerPrefs.DeleteKey(RangeFirstMidiKey);
+            PlayerPrefs.DeleteKey(RangeLastMidiKey);
         }
 
     }

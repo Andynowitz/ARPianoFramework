@@ -4,9 +4,14 @@ namespace ARPIANO.Scripts.Tracking
 {
     public class KeyboardCalibration : MonoBehaviour
     {
+        public const int MinMidiNote = 21; // A0
+        public const int MaxMidiNote = 108; // C8
+        public const int DefaultFirstMidiNote = 48; // C3
+        public const int DefaultLastMidiNote = 84;  // C6
+
         [Header("Known piano range")]
-        [SerializeField] private int firstMidiNote = 48; // C3
-        [SerializeField] private int lastMidiNote = 84;  // C6
+        [SerializeField] private int firstMidiNote = DefaultFirstMidiNote;
+        [SerializeField] private int lastMidiNote = DefaultLastMidiNote;
 
         [Header("Camera/image coordinates")]
         [SerializeField] private Vector2 topLeft;
@@ -16,6 +21,22 @@ namespace ARPIANO.Scripts.Tracking
 
         public int FirstMidiNote => firstMidiNote;
         public int LastMidiNote => lastMidiNote;
+
+        public static bool IsValidRange(int first, int last)
+        {
+            return first >= MinMidiNote &&
+                   last <= MaxMidiNote &&
+                   last > first;
+        }
+
+        public void SetRange(int first, int last)
+        {
+            first = Mathf.Clamp(first, MinMidiNote, MaxMidiNote - 1);
+            last = Mathf.Clamp(last, first + 1, MaxMidiNote);
+
+            firstMidiNote = first;
+            lastMidiNote = last;
+        }
 
         public Vector2 TopLeft
         {

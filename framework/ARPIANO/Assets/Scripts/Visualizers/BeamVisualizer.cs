@@ -52,6 +52,13 @@ namespace ARPIANO.Scripts.Visualizers
         private bool mappingCreated;
         private float lastLessonTime = -1f;
 
+        private int mappingFirstMidiNote;
+        private int mappingLastMidiNote;
+        private Vector2 mappingTopLeft;
+        private Vector2 mappingTopRight;
+        private Vector2 mappingBottomRight;
+        private Vector2 mappingBottomLeft;
+
         private void Awake()
         {
             lessonPlayer = FindAnyObjectByType<LessonPlayer>();
@@ -101,6 +108,14 @@ namespace ARPIANO.Scripts.Visualizers
         {
             if (!eventsSubscribed)
                 TrySubscribe();
+
+            if (mappingCreated && IsMappingStale())
+            {
+                mappingCreated = false;
+                noteMapper = null;
+                homography?.Dispose();
+                homography = null;
+            }
 
             if (!mappingCreated)
             {
@@ -204,6 +219,13 @@ namespace ARPIANO.Scripts.Visualizers
             noteMapper = new KeyboardNoteMapper(
                 calibration.FirstMidiNote,
                 calibration.LastMidiNote);
+
+            mappingFirstMidiNote = calibration.FirstMidiNote;
+            mappingLastMidiNote = calibration.LastMidiNote;
+            mappingTopLeft = calibration.TopLeft;
+            mappingTopRight = calibration.TopRight;
+            mappingBottomRight = calibration.BottomRight;
+            mappingBottomLeft = calibration.BottomLeft;
 
             mappingCreated = true;
 
@@ -319,9 +341,7 @@ namespace ARPIANO.Scripts.Visualizers
                     note.MidiNumber);
 
             float beamWidth =
-                isBlackKey
-                    ? blackBeamWidth
-                    : whiteBeamWidth;
+                GetBeamWidth(isBlackKey);
 
             Color beamColor =
                 isBlackKey
@@ -469,7 +489,7 @@ namespace ARPIANO.Scripts.Visualizers
             bool isBlackKey = IsBlackKey(note.NoteNumber);
 
             float beamWidth =
-                isBlackKey ? blackBeamWidth : whiteBeamWidth;
+                GetBeamWidth(isBlackKey);
 
             Color beamColor =
                 isBlackKey ? blackBeamColor : whiteBeamColor;
@@ -654,6 +674,60 @@ namespace ARPIANO.Scripts.Visualizers
                 calibration.TopLeft;
 
             return -Mathf.Atan2(edge.y, edge.x) * Mathf.Rad2Deg;
+        }
+
+        private bool IsMappingStale()
+        {
+            if (calibration == null)
+                return true;
+
+            return calibration.FirstMidiNote != mappingFirstMidiNote ||
+                   calibration.LastMidiNote != mappingLastMidiNote ||
+                   calibration.TopLeft != mappingTopLeft ||
+                   calibration.TopRight != mappingTopRight ||
+                   calibration.BottomRight != mappingBottomRight ||
+                   calibration.BottomLeft != mappingBottomLeft;
+        }
+
+        private float GetBeamWidth(bool isBlackKey)
+        {
+            float whiteWidth = GetCalibratedWhiteKeyWidth();
+
+            if (!isBlackKey)
+                return whiteWidth;
+
+            if (whiteBeamWidth <= 0f)
+                return blackBeamWidth;
+
+            return whiteWidth * (blackBeamWidth / whiteBeamWidth);
+        }
+
+        private float GetCalibratedWhiteKeyWidth()
+        {
+            if (calibration == null ||
+                homography == null ||
+                webcamRect == null)
+                return whiteBeamWidth;
+
+            int whiteKeyCount = calibration.WhiteKeyCount;
+
+            if (whiteKeyCount <= 0)
+                return whiteBeamWidth;
+
+            Vector2 topLeftLocal = ImageToWebcamLocalPosition(
+                homography.NormalizedToImage(new Vector2(0f, 0f)));
+
+            Vector2 topRightLocal = ImageToWebcamLocalPosition(
+                homography.NormalizedToImage(new Vector2(1f, 0f)));
+
+            float keyboardWidth = Vector2.Distance(
+                topLeftLocal,
+                topRightLocal);
+
+            if (keyboardWidth <= 0f)
+                return whiteBeamWidth;
+
+            return keyboardWidth / whiteKeyCount;
         }
 
     }
