@@ -14,7 +14,29 @@ namespace ARPIANO.Scripts.MIDI
         // Parses a MIDI file and returns a Lesson object containing the parsed notes.
         public Lesson ParseMIDIFile(string filePath)
         {
-            MidiFile midiFile = MidiFile.Read(filePath);
+            using (FileStream stream = File.OpenRead(filePath))
+            {
+                return ParseMIDIStream(
+                    stream,
+                    Path.GetFileName(filePath));
+            }
+        }
+
+        // Parses MIDI bytes, which also works for Android StreamingAssets.
+        public Lesson ParseMIDIBytes(byte[] data, string fileName)
+        {
+            if (data == null || data.Length == 0)
+                throw new ArgumentException("MIDI data is empty.");
+
+            using (MemoryStream stream = new MemoryStream(data))
+            {
+                return ParseMIDIStream(stream, fileName);
+            }
+        }
+
+        private Lesson ParseMIDIStream(Stream stream, string fileName)
+        {
+            MidiFile midiFile = MidiFile.Read(stream);
 
             Lesson lesson = new Lesson();
 
@@ -27,7 +49,10 @@ namespace ARPIANO.Scripts.MIDI
             lesson.TimeSignatureNumerator = timeSignature.Numerator;
             lesson.TimeSignatureDenominator = timeSignature.Denominator;
 
-            lesson.Name = Path.GetFileNameWithoutExtension(filePath);
+            string lessonName = Path.GetFileNameWithoutExtension(fileName);
+            lesson.Name = string.IsNullOrEmpty(lessonName)
+                ? "Lesson"
+                : lessonName.Replace('_', ' ');
 
             foreach (var note in midiFile.GetNotes())
             {
