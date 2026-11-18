@@ -27,8 +27,16 @@ namespace ARPIANO.Scripts.Tracking
 
         private void Awake()
         {
-            pointRect = GetComponent<RectTransform>();
-            pointImage = GetComponent<Image>();
+            EnsureReferences();
+        }
+
+        private void EnsureReferences()
+        {
+            if (pointRect == null)
+                pointRect = GetComponent<RectTransform>();
+
+            if (pointImage == null)
+                pointImage = GetComponent<Image>();
         }
 
         
@@ -50,16 +58,16 @@ namespace ARPIANO.Scripts.Tracking
                 return;
             }
 
+            // Never overwrite a calibration that is already restored
+            // or applied (the controller owns those positions).
+            if (calibrationController != null &&
+                calibrationController.IsCalibrated)
+                return;
+
             // Only use default positions when no saved calibration exists.
             if (PlayerPrefs.GetInt("ARPiano_Calibration_Saved", 0) != 1)
             {
                 SetInitialPosition();
-            }
-            else
-            {
-                // The controller restores the saved positions.
-                // Synchronize this point with the calibration model.
-                UpdateCalibration(pointRect.anchoredPosition, webcamRect.rect);
             }
         }
 
@@ -101,6 +109,8 @@ namespace ARPIANO.Scripts.Tracking
 
         private void SetInitialPosition()
         {
+            EnsureReferences();
+
             Rect rect = webcamRect.rect;
 
             Vector2 normalizedPosition = pointType switch
@@ -189,6 +199,8 @@ namespace ARPIANO.Scripts.Tracking
 
         public bool SetImagePoint(Vector2 imagePoint)
         {
+            EnsureReferences();
+
             if (webcamRect == null || pointRect == null)
                 return false;
 

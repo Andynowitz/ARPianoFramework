@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using ARPIANO.Scripts.Models;
 using ARPIANO.Scripts.Tracking;
+using ARPIANO.Scripts.UI;
 using System.Collections.Generic;
 using ARPIANO.Scripts.Lessons;
 using ARPIANO.Scripts.MIDI;
@@ -48,9 +49,22 @@ namespace ARPIANO.Scripts.Visualizers
 
         private readonly Dictionary<LiveMIDINoteEvent, Beam> liveBeams = new();
 
+        private UIManager uiManager;
+        private readonly Dictionary<LiveMIDINoteEvent, Image> lessonKeyFeedback = new();
+
+        private static readonly Color correctKeyColor =
+            new Color(0.2f, 0.9f, 0.3f, 0.45f);
+
+        private static readonly Color incorrectKeyColor =
+            new Color(0.95f, 0.2f, 0.2f, 0.45f);
+
         private bool eventsSubscribed;
         private bool mappingCreated;
         private float lastLessonTime = -1f;
+
+        private Lesson lastLesson;
+
+        private bool invalidCalibrationLogged;
 
         private int mappingFirstMidiNote;
         private int mappingLastMidiNote;
@@ -109,8 +123,21 @@ namespace ARPIANO.Scripts.Visualizers
             if (!eventsSubscribed)
                 TrySubscribe();
 
+            Lesson currentLesson =
+                lessonPlayer != null
+                    ? lessonPlayer.CurrentLesson
+                    : null;
+
+            if (currentLesson != lastLesson)
+            {
+                ClearLessonBeams();
+                lastLesson = currentLesson;
+                lastLessonTime = -1f;
+            }
+
             if (mappingCreated && IsMappingStale())
             {
+                ClearLessonBeams();
                 mappingCreated = false;
                 noteMapper = null;
                 homography?.Dispose();
@@ -127,8 +154,7 @@ namespace ARPIANO.Scripts.Visualizers
 
             if (lastLessonTime >= 0f && currentTime < lastLessonTime)
             {
-                scheduledBeams.Clear();
-                activeBeams.Clear();
+                ClearLessonBeams();
             }
 
             lastLessonTime = currentTime;
@@ -193,6 +219,20 @@ namespace ARPIANO.Scripts.Visualizers
         private void TryCreateMapping()
         {
             if (calibrationController == null)
+            {
+                calibrationController =
+                    FindAnyObjectByType<KeyboardCalibrationController>(
+                        FindObjectsInactive.Include);
+            }
+
+            if (calibration == null)
+            {
+                calibration =
+                    FindAnyObjectByType<KeyboardCalibration>(
+                        FindObjectsInactive.Include);
+            }
+
+            if (calibrationController == null)
                 return;
 
             if (!calibrationController.IsCalibrated)
@@ -204,6 +244,20 @@ namespace ARPIANO.Scripts.Visualizers
                     "BeamVisualizer: KeyboardCalibration is not assigned.");
 
                 enabled = false;
+                return;
+            }
+
+            if (!HasValidCalibration(calibration))
+            {
+                if (!invalidCalibrationLogged)
+                {
+                    Debug.LogWarning(
+                        "BeamVisualizer: Calibration corners are invalid; " +
+                        "waiting for a valid calibration.");
+
+                    invalidCalibrationLogged = true;
+                }
+
                 return;
             }
 
@@ -228,6 +282,7 @@ namespace ARPIANO.Scripts.Visualizers
             mappingBottomLeft = calibration.BottomLeft;
 
             mappingCreated = true;
+            invalidCalibrationLogged = false;
 
             Debug.Log(
                 "BeamVisualizer keyboard mapping created.");
@@ -467,6 +522,12 @@ namespace ARPIANO.Scripts.Visualizers
             if (liveBeams.ContainsKey(note))
                 return;
 
+            if (IsLessonModeActive())
+            {
+                ShowLessonKeyFeedback(note);
+                return;
+            }
+
             float normalizedX =
                 noteMapper.GetNormalizedCenter(note.NoteNumber);
 
@@ -530,6 +591,12 @@ namespace ARPIANO.Scripts.Visualizers
 
         private void OnLiveNoteReleased(LiveMIDINoteEvent note)
         {
+            if (lessonKeyFeedback.TryGetValue(note, out Image overlay))
+            {
+                RemoveLessonKeyFeedback(note, overlay);
+                return;
+            }
+
             if (!liveBeams.TryGetValue(note, out Beam beam))
                 return;
 
@@ -555,6 +622,159 @@ namespace ARPIANO.Scripts.Visualizers
 
             liveBeams.Clear();
             allLiveBeams.Clear();
+
+            ClearLessonKeyFeedback();
+        }
+
+        private bool IsLessonModeActive()
+        {
+            if (uiManager == null)
+                uiManager = FindAnyObjectByType<UIManager>();
+
+            // The active UI panel is the source of truth: a lesson may
+            // stay loaded after navigating away from Lesson Mode.
+            return uiManager != null && uiManager.IsLessonMode;
+        }
+
+        private void ShowLessonKeyFeedback(LiveMIDINoteEvent note)
+        {
+            if (note == null || lessonKeyFeedback.ContainsKey(note))
+                return;
+
+            if (!TryGetKeyOverlayGeometry(
+                    note.NoteNumber,
+                    out Vector2 center,
+                    out Vector2 size,
+                    out float angle))
+                return;
+
+            GameObject overlayObject = new GameObject(
+                $"LessonKeyFeedback_{note.NoteNumber}",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+
+            RectTransform overlayRect =
+                overlayObject.GetComponent<RectTransform>();
+
+            overlayRect.SetParent(webcamRect, false);
+            overlayRect.SetAsLastSibling();
+            overlayRect.anchorMin = new Vector2(0.5f, 0.5f);
+            overlayRect.anchorMax = new Vector2(0.5f, 0.5f);
+            overlayRect.pivot = new Vector2(0.5f, 0.5f);
+            overlayRect.sizeDelta = size;
+            overlayRect.anchoredPosition = center;
+            overlayRect.localRotation = Quaternion.Euler(0f, 0f, angle);
+
+            bool isExpected =
+                lessonPlayer != null &&
+                lessonPlayer.AwaitingNote != null &&
+                lessonPlayer.AwaitingNote.MidiNumber == note.NoteNumber;
+
+            Image image = overlayObject.GetComponent<Image>();
+            image.color = isExpected ? correctKeyColor : incorrectKeyColor;
+            image.raycastTarget = false;
+
+            lessonKeyFeedback.Add(note, image);
+        }
+
+        private void RemoveLessonKeyFeedback(
+            LiveMIDINoteEvent note,
+            Image overlay)
+        {
+            lessonKeyFeedback.Remove(note);
+
+            if (overlay != null)
+                Destroy(overlay.gameObject);
+        }
+
+        private void ClearLessonKeyFeedback()
+        {
+            foreach (Image overlay in lessonKeyFeedback.Values)
+            {
+                if (overlay != null)
+                    Destroy(overlay.gameObject);
+            }
+
+            lessonKeyFeedback.Clear();
+        }
+
+        private bool TryGetKeyOverlayGeometry(
+            int midiNote,
+            out Vector2 center,
+            out Vector2 size,
+            out float angle)
+        {
+            center = Vector2.zero;
+            size = Vector2.zero;
+            angle = 0f;
+
+            if (noteMapper == null ||
+                homography == null ||
+                webcamRect == null ||
+                calibration == null)
+                return false;
+
+            float normalizedCenter =
+                noteMapper.GetNormalizedCenter(midiNote);
+
+            if (normalizedCenter < 0f)
+                return false;
+
+            int whiteKeyCount = calibration.WhiteKeyCount;
+
+            if (whiteKeyCount <= 0)
+                return false;
+
+            bool isBlackKey = IsBlackKey(midiNote);
+
+            float widthRatio =
+                isBlackKey && whiteBeamWidth > 0f
+                    ? blackBeamWidth / whiteBeamWidth
+                    : 1f;
+
+            float halfWidthNormalized =
+                widthRatio / whiteKeyCount * 0.5f;
+
+            float left = normalizedCenter - halfWidthNormalized;
+            float right = normalizedCenter + halfWidthNormalized;
+
+            Vector2 topLeft = ImageToWebcamLocalPosition(
+                homography.NormalizedToImage(new Vector2(left, 0f)));
+
+            Vector2 topRight = ImageToWebcamLocalPosition(
+                homography.NormalizedToImage(new Vector2(right, 0f)));
+
+            Vector2 bottomLeft = ImageToWebcamLocalPosition(
+                homography.NormalizedToImage(new Vector2(left, 1f)));
+
+            Vector2 bottomRight = ImageToWebcamLocalPosition(
+                homography.NormalizedToImage(new Vector2(right, 1f)));
+
+            center = (topLeft + topRight + bottomLeft + bottomRight) * 0.25f;
+
+            size = new Vector2(
+                Vector2.Distance(topLeft, topRight),
+                Vector2.Distance(topLeft, bottomLeft));
+
+            angle =
+                Mathf.Atan2(
+                    topRight.y - topLeft.y,
+                    topRight.x - topLeft.x) * Mathf.Rad2Deg;
+
+            return size.x > 0f && size.y > 0f;
+        }
+
+        private void ClearLessonBeams()
+        {
+            foreach (Beam beam in activeBeams.Values)
+            {
+                if (beam != null)
+                    beam.Finish();
+            }
+
+            activeBeams.Clear();
+            scheduledBeams.Clear();
         }
 
         public void NoteStarted(PianoNote note)
@@ -652,6 +872,9 @@ namespace ARPIANO.Scripts.Visualizers
 
             UnsubscribeFromLiveMIDI();
 
+            ClearLessonBeams();
+            ClearLessonKeyFeedback();
+
             foreach (Beam beam in liveBeams.Values)
             {   
                 if (beam != null)
@@ -674,6 +897,35 @@ namespace ARPIANO.Scripts.Visualizers
                 calibration.TopLeft;
 
             return -Mathf.Atan2(edge.y, edge.x) * Mathf.Rad2Deg;
+        }
+
+        private static bool HasValidCalibration(
+            KeyboardCalibration keyboardCalibration)
+        {
+            if (keyboardCalibration == null)
+                return false;
+
+            Vector2[] corners = keyboardCalibration.GetImageCorners();
+
+            if (corners == null || corners.Length != 4)
+                return false;
+
+            for (int i = 0; i < corners.Length; i++)
+            {
+                if (float.IsNaN(corners[i].x) ||
+                    float.IsNaN(corners[i].y) ||
+                    float.IsInfinity(corners[i].x) ||
+                    float.IsInfinity(corners[i].y))
+                    return false;
+            }
+
+            float width =
+                Vector2.Distance(corners[0], corners[1]);
+
+            float height =
+                Vector2.Distance(corners[0], corners[3]);
+
+            return width > 1f && height > 1f;
         }
 
         private bool IsMappingStale()

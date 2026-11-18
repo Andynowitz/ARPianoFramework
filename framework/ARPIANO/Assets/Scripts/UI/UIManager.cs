@@ -27,6 +27,13 @@ namespace ARPIANO.Scripts.UI
             SetActivePanel(modeSelectionPanel);
         }
 
+        public bool IsLessonMode =>
+            lessonPanel != null && lessonPanel.activeInHierarchy;
+
+        public bool IsLivePerformanceMode =>
+            livePerformancePanel != null &&
+            livePerformancePanel.activeInHierarchy;
+
         public void ShowCalibration()
         {
             Debug.Log("UIManager: ShowCalibration() called.");

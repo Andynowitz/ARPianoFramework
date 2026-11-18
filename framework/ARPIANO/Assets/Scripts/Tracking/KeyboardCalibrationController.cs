@@ -38,6 +38,7 @@ namespace ARPIANO.Scripts.Tracking
         public bool IsCalibrated { get; private set; }        private RectTransform canvasRect;
 
         private bool updatingRangeDropdowns;
+        private bool restoreAttempted;
 
         private Image topLine;
         private Image rightLine;
@@ -60,7 +61,28 @@ namespace ARPIANO.Scripts.Tracking
 
         private void Start()
         {
-            LoadCalibration();
+            EnsureRestored();
+        }
+
+        public void EnsureRestored()
+        {
+            if (restoreAttempted)
+                return;
+
+            restoreAttempted = true;
+            LoadCalibration(true);
+        }
+
+        // Called once at startup so a saved calibration is active before
+        // the user opens the calibration panel.
+        public static void RequestStartupRestore()
+        {
+            KeyboardCalibrationController controller =
+                FindAnyObjectByType<KeyboardCalibrationController>(
+                    FindObjectsInactive.Include);
+
+            if (controller != null)
+                controller.EnsureRestored();
         }
 
         private void Awake()
@@ -171,24 +193,7 @@ namespace ARPIANO.Scripts.Tracking
             Debug.Log("Keyboard calibration completed.");
             Debug.Log("========================================");
 
-            VirtualPiano virtualPiano = FindAnyObjectByType<VirtualPiano>();
-
-            if (virtualPiano != null)
-            {
-                bool generated = virtualPiano.GenerateVisibleRange(
-                    calibration.FirstMidiNote,
-                    calibration.WhiteKeyCount);
-
-                Debug.Log(
-                    $"Virtual piano generation after calibration: " +
-                    $"success={generated}, " +
-                    $"keys={virtualPiano.Keys.Count}");
-            }
-            else
-            {
-                Debug.LogError(
-                    "KeyboardCalibrationController: VirtualPiano was not found.");
-            }
+            RegenerateVirtualPiano();
 
             if (calibrateButton != null)
             {
@@ -361,10 +366,10 @@ namespace ARPIANO.Scripts.Tracking
             Debug.Log("KeyboardCalibrationController: ResetCalibration() called.");
 
             IsCalibrated = false;
-            PlayerPrefs.DeleteKey(CalibrationSavedKey);
-            PlayerPrefs.DeleteKey(CalibrationVersionKey);
-            ClearSavedRange();
-            PlayerPrefs.Save();
+
+            // Keep the last saved calibration so the visual points can be
+            // restored and used as the starting point for recalibration.
+            // It is only replaced when a new calibration is saved.
 
             SetRectangleColor(rectangleColor);
             
@@ -383,9 +388,36 @@ namespace ARPIANO.Scripts.Tracking
             SetPointColor(bottomRight, calibratedColor);
             SetPointColor(bottomLeft, calibratedColor);
 
+            ResyncPointsFromCalibration();
+
             UpdateRectangle();
 
             Debug.Log($"Reset complete. IsCalibrated={IsCalibrated}");
+        }
+
+        // Positions the visible points from the current calibration model so
+        // the rectangle always matches the stored physical keyboard region.
+        private void ResyncPointsFromCalibration()
+        {
+            if (calibration == null ||
+                !IsValidCalibration(calibration.GetImageCorners()))
+                return;
+
+            SyncPoint(topLeft, calibration.TopLeft);
+            SyncPoint(topRight, calibration.TopRight);
+            SyncPoint(bottomRight, calibration.BottomRight);
+            SyncPoint(bottomLeft, calibration.BottomLeft);
+        }
+
+        private static void SyncPoint(RectTransform point, Vector2 imagePoint)
+        {
+            KeyboardCalibrationUI pointUI =
+                point != null
+                    ? point.GetComponent<KeyboardCalibrationUI>()
+                    : null;
+
+            if (pointUI != null)
+                pointUI.SetImagePoint(imagePoint);
         }
 
         private void UnlockPoint(RectTransform point)
@@ -471,7 +503,7 @@ namespace ARPIANO.Scripts.Tracking
         }
 
         
-        private void LoadCalibration()
+        private void LoadCalibration(bool restoreOnly = false)
         {
             LoadSavedRange();
 
@@ -533,6 +565,22 @@ namespace ARPIANO.Scripts.Tracking
                 return;
             }
 
+            // Use the stored values verbatim so the model matches the
+            // original manual calibration exactly.
+            calibration.TopLeft = LoadImagePoint(TopLeftXKey, TopLeftYKey);
+            calibration.TopRight = LoadImagePoint(TopRightXKey, TopRightYKey);
+            calibration.BottomRight = LoadImagePoint(BottomRightXKey, BottomRightYKey);
+            calibration.BottomLeft = LoadImagePoint(BottomLeftXKey, BottomLeftYKey);
+
+            if (restoreOnly)
+            {
+                IsCalibrated = true;
+                RegenerateVirtualPiano();
+
+                Debug.Log("Saved keyboard calibration restored at startup.");
+                return;
+            }
+
             UpdateRectangle();
 
             // Restore the calibrated state, lock the points,
@@ -540,6 +588,38 @@ namespace ARPIANO.Scripts.Tracking
             Calibrate();
 
             Debug.Log("Saved keyboard calibration restored.");
+        }
+
+        private static Vector2 LoadImagePoint(string xKey, string yKey)
+        {
+            return new Vector2(
+                PlayerPrefs.GetFloat(xKey),
+                PlayerPrefs.GetFloat(yKey));
+        }
+
+        private void RegenerateVirtualPiano()
+        {
+            if (calibration == null)
+                return;
+
+            VirtualPiano virtualPiano = FindAnyObjectByType<VirtualPiano>();
+
+            if (virtualPiano != null)
+            {
+                bool generated = virtualPiano.GenerateVisibleRange(
+                    calibration.FirstMidiNote,
+                    calibration.WhiteKeyCount);
+
+                Debug.Log(
+                    $"Virtual piano generation after calibration: " +
+                    $"success={generated}, " +
+                    $"keys={virtualPiano.Keys.Count}");
+            }
+            else
+            {
+                Debug.LogError(
+                    "KeyboardCalibrationController: VirtualPiano was not found.");
+            }
         }
 
         private void SetInitialPositions()

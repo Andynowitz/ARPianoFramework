@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections;
 
 namespace ARPIANO.Scripts.Tracking
 {
@@ -21,6 +22,15 @@ namespace ARPIANO.Scripts.Tracking
 
         public int FirstMidiNote => firstMidiNote;
         public int LastMidiNote => lastMidiNote;
+
+        // Restore the saved calibration once the UI layout exists,
+        // even when the calibration panel is inactive.
+        private IEnumerator Start()
+        {
+            yield return null;
+
+            KeyboardCalibrationController.RequestStartupRestore();
+        }
 
         public static bool IsValidRange(int first, int last)
         {

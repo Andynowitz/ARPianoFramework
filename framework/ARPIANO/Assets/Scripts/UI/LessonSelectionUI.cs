@@ -69,17 +69,25 @@ namespace ARPIANO.Scripts.UI
                 valid = false;
             }
 
+            if (!TryResolveLessonPlayer())
+                valid = false;
+
+            return valid;
+        }
+
+        private bool TryResolveLessonPlayer()
+        {
             if (lessonPlayer == null)
                 lessonPlayer = FindAnyObjectByType<LessonPlayer>();
 
             if (lessonPlayer == null)
             {
                 Debug.LogError(
-                    "LessonSelectionUI: LessonPlayer is not assigned.");
-                valid = false;
+                    "LessonSelectionUI: LessonPlayer is not available.");
+                return false;
             }
 
-            return valid;
+            return true;
         }
 
         public void RefreshLessons()
@@ -229,16 +237,63 @@ namespace ARPIANO.Scripts.UI
                 return;
             }
 
-            if (lessonPlayer == null)
-                lessonPlayer = FindAnyObjectByType<LessonPlayer>();
-
-            if (lessonPlayer == null)
+            if (!TryResolveLessonPlayer())
             {
                 SetStatus("LessonPlayer was not found.");
                 return;
             }
 
             StartCoroutine(LoadLessonRoutine(lessonEntries[index]));
+        }
+
+        public void PlayLesson()
+        {
+            if (!TryResolveLessonPlayer())
+                return;
+
+            if (lessonPlayer.CurrentLesson == null)
+            {
+                Debug.LogWarning(
+                    "LessonSelectionUI: No lesson is loaded to play.");
+                return;
+            }
+
+            lessonPlayer.Play();
+            Debug.Log("LessonSelectionUI: Playback started.");
+        }
+
+        public void PauseLesson()
+        {
+            if (!TryResolveLessonPlayer())
+                return;
+
+            lessonPlayer.Pause();
+            Debug.Log("LessonSelectionUI: Playback paused.");
+        }
+
+        public void ResumeLesson()
+        {
+            if (!TryResolveLessonPlayer())
+                return;
+
+            if (lessonPlayer.CurrentLesson == null)
+            {
+                Debug.LogWarning(
+                    "LessonSelectionUI: No lesson is loaded to resume.");
+                return;
+            }
+
+            lessonPlayer.Play();
+            Debug.Log("LessonSelectionUI: Playback resumed.");
+        }
+
+        public void StopLesson()
+        {
+            if (!TryResolveLessonPlayer())
+                return;
+
+            lessonPlayer.Stop();
+            Debug.Log("LessonSelectionUI: Playback stopped.");
         }
 
         private IEnumerator LoadLessonRoutine(LessonEntry entry)
@@ -301,15 +356,17 @@ namespace ARPIANO.Scripts.UI
             }
             else
             {
+                lessonPlayer.Stop();
                 lessonPlayer.LoadLesson(lesson);
+                lessonPlayer.Play();
 
                 Debug.Log(
-                    $"LessonSelectionUI: Loaded '{lesson.Name}' " +
+                    $"LessonSelectionUI: Playing '{lesson.Name}' " +
                     $"({lesson.Notes.Count} notes, " +
                     $"{lesson.GetDuration():F2}s).");
 
                 SetStatus(
-                    $"Loaded {lesson.Name} " +
+                    $"Playing {lesson.Name} " +
                     $"({lesson.Notes.Count} notes)");
             }
 
