@@ -135,6 +135,10 @@ namespace ARPIANO.Scripts.Visualizers
                 lastLessonTime = -1f;
             }
 
+            // Key overlays only belong to Lesson Mode.
+            if (lessonKeyFeedback.Count > 0 && !IsLessonModeActive())
+                ClearLessonKeyFeedback();
+
             if (mappingCreated && IsMappingStale())
             {
                 ClearLessonBeams();
@@ -515,8 +519,7 @@ namespace ARPIANO.Scripts.Visualizers
         private void OnLiveNotePressed(LiveMIDINoteEvent note)
         {
             if (!mappingCreated || webcamRect == null ||
-                homography == null || noteMapper == null ||
-                beamPrefab == null)
+                homography == null || noteMapper == null)
                 return;
 
             if (liveBeams.ContainsKey(note))
@@ -527,6 +530,9 @@ namespace ARPIANO.Scripts.Visualizers
                 ShowLessonKeyFeedback(note);
                 return;
             }
+
+            if (beamPrefab == null)
+                return;
 
             float normalizedX =
                 noteMapper.GetNormalizedCenter(note.NoteNumber);
@@ -629,11 +635,37 @@ namespace ARPIANO.Scripts.Visualizers
         private bool IsLessonModeActive()
         {
             if (uiManager == null)
-                uiManager = FindAnyObjectByType<UIManager>();
+                uiManager = FindConfiguredUIManager();
 
             // The active UI panel is the source of truth: a lesson may
             // stay loaded after navigating away from Lesson Mode.
             return uiManager != null && uiManager.IsLessonMode;
+        }
+
+        // The scene can contain more than one UIManager component; prefer
+        // the instance that actually has the panels assigned.
+        private static UIManager FindConfiguredUIManager()
+        {
+            UIManager[] managers =
+                FindObjectsByType<UIManager>(
+                    FindObjectsInactive.Include,
+                    FindObjectsSortMode.None);
+
+            UIManager fallback = null;
+
+            foreach (UIManager manager in managers)
+            {
+                if (manager == null)
+                    continue;
+
+                if (manager.HasPanelReferences)
+                    return manager;
+
+                if (fallback == null)
+                    fallback = manager;
+            }
+
+            return fallback;
         }
 
         private void ShowLessonKeyFeedback(LiveMIDINoteEvent note)

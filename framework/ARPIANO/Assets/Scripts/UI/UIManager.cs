@@ -34,6 +34,14 @@ namespace ARPIANO.Scripts.UI
             livePerformancePanel != null &&
             livePerformancePanel.activeInHierarchy;
 
+        // True when this component is the configured instance (used to
+        // ignore duplicate/empty UIManager components in the scene).
+        public bool HasPanelReferences =>
+            calibrationPanel != null ||
+            modeSelectionPanel != null ||
+            livePerformancePanel != null ||
+            lessonPanel != null;
+
         public void ShowCalibration()
         {
             Debug.Log("UIManager: ShowCalibration() called.");
