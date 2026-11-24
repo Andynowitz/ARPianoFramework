@@ -35,6 +35,9 @@ namespace ARPIANO.Scripts.Tracking
         [SerializeField] private Color calibratedColor = Color.red;
         [SerializeField] private float rectangleThickness = 4f;
 
+        [Header("Virtual Piano")]
+        [SerializeField] private bool generateVirtualPiano = false;
+
         public bool IsCalibrated { get; private set; }        private RectTransform canvasRect;
 
         private bool updatingRangeDropdowns;
@@ -599,27 +602,26 @@ namespace ARPIANO.Scripts.Tracking
 
         private void RegenerateVirtualPiano()
         {
-            if (calibration == null)
+            if (!generateVirtualPiano || calibration == null)
                 return;
 
             VirtualPiano virtualPiano = FindAnyObjectByType<VirtualPiano>();
 
-            if (virtualPiano != null)
+            if (virtualPiano == null)
             {
-                bool generated = virtualPiano.GenerateVisibleRange(
-                    calibration.FirstMidiNote,
-                    calibration.WhiteKeyCount);
+                Debug.LogWarning(
+                    "VirtualPiano generation is enabled, but no VirtualPiano was found.");
+                return;
+            }
 
-                Debug.Log(
-                    $"Virtual piano generation after calibration: " +
-                    $"success={generated}, " +
-                    $"keys={virtualPiano.Keys.Count}");
-            }
-            else
-            {
-                Debug.LogError(
-                    "KeyboardCalibrationController: VirtualPiano was not found.");
-            }
+            bool generated = virtualPiano.GenerateVisibleRange(
+                calibration.FirstMidiNote,
+                calibration.WhiteKeyCount);
+
+            Debug.Log(
+                $"Virtual piano generation after calibration: " +
+                $"success={generated}, " +
+                $"keys={virtualPiano.Keys.Count}");
         }
 
         private void SetInitialPositions()
