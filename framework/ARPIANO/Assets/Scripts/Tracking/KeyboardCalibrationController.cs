@@ -602,6 +602,9 @@ namespace ARPIANO.Scripts.Tracking
 
         private void RegenerateVirtualPiano()
         {
+            if (!RuntimeFeatures.VirtualPianoEnabled)
+                return;
+
             if (!generateVirtualPiano || calibration == null)
                 return;
 

@@ -40,6 +40,9 @@ namespace ARPIANO.Scripts.Piano
 
         private void OnEnable()
         {
+            if (!RuntimeFeatures.VirtualPianoEnabled)
+                return;
+
             TrySubscribeLessonPlayer();
         }
 
@@ -55,6 +58,9 @@ namespace ARPIANO.Scripts.Piano
 
         private void Update()
         {
+            if (!RuntimeFeatures.VirtualPianoEnabled)
+                return;
+
             if (!lessonEventsSubscribed)
                 TrySubscribeLessonPlayer();
         }
@@ -76,6 +82,12 @@ namespace ARPIANO.Scripts.Piano
         }
         private void Awake()
         {
+            if (!RuntimeFeatures.VirtualPianoEnabled)
+            {
+                enabled = false;
+                return;
+            }
+
             // Load prefabs programmatically so Inspector cannot override them
             whiteKeyPrefab = PianoPrefabLoader.LoadWhiteKey();
             blackKeyPrefab = PianoPrefabLoader.LoadBlackKey();
@@ -114,7 +126,7 @@ namespace ARPIANO.Scripts.Piano
         
         public bool GenerateVisibleRange(int firstMidiNote, int whiteKeyCount)
         {
-            if (whiteKeyCount <= 0)
+            if (!RuntimeFeatures.VirtualPianoEnabled || whiteKeyCount <= 0)
                 return false;
 
             hasRequestedRange = true;

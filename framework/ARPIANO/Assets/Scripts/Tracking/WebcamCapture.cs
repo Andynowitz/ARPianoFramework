@@ -33,6 +33,11 @@ namespace ARPIANO.Scripts.Tracking
 
         private void StartWebcam()
         {
+            // Re-opening the device takes hundreds of milliseconds. Never do it
+            // again while the current capture is already running.
+            if (ActiveTexture != null && ActiveTexture.isPlaying)
+                return;
+
             WebCamDevice[] devices = WebCamTexture.devices;
             Debug.Log($"Available webcams: {devices.Length}");
 
@@ -57,7 +62,7 @@ namespace ARPIANO.Scripts.Tracking
                 requestedHeight,
                 requestedFps);
 
-            preview.texture = ActiveTexture;
+            preview.texture = null;
             preview.color = Color.white;
             preview.uvRect = new Rect(0f, 0f, 1f, 1f);
             preview.enabled = true;
@@ -67,7 +72,6 @@ namespace ARPIANO.Scripts.Tracking
             preview.transform.SetAsLastSibling();
 
             ActiveTexture.Play();
-            LogPreviewRenderState();
             startupRoutine = StartCoroutine(LogActualResolutionWhenReady());
         }
 
@@ -188,11 +192,15 @@ namespace ARPIANO.Scripts.Tracking
         private void LogPreviewRenderState()
         {
             Rect rect = preview.rectTransform.rect;
+            string textureSize = ActiveTexture != null
+                ? $"{ActiveTexture.width}x{ActiveTexture.height}"
+                : "none";
             Debug.Log(
                 $"Webcam preview state: activeInHierarchy={preview.gameObject.activeInHierarchy}, " +
                 $"enabled={preview.enabled}, textureAssigned={preview.texture != null}, " +
-                $"width={rect.width}, height={rect.height}, canvasEnabled={webcamCanvas.enabled}, " +
-                $"renderMode={webcamCanvas.renderMode}, sortingOrder={webcamCanvas.sortingOrder}");
+                $"previewRect={rect.width}x{rect.height}, cameraTexture={textureSize}, " +
+                $"canvasEnabled={webcamCanvas.enabled}, renderMode={webcamCanvas.renderMode}, " +
+                $"sortingOrder={webcamCanvas.sortingOrder}");
         }
 
         private IEnumerator LogActualResolutionWhenReady()
@@ -205,11 +213,29 @@ namespace ARPIANO.Scripts.Tracking
 
             if (ActiveTexture != null)
             {
-                Debug.Log($"Actual webcam resolution: {ActiveTexture.width}x{ActiveTexture.height}");
+                int cameraWidth = ActiveTexture.width;
+                int cameraHeight = ActiveTexture.height;
 
-                if (ActiveTexture.height > 0)
+                Debug.Log(
+                    $"Webcam capture mode: {cameraWidth}x{cameraHeight} " +
+                    $"(requested {requestedWidth}x{requestedHeight} at {requestedFps} FPS)");
+
+                if (cameraWidth > 16 && cameraHeight > 16)
                 {
-                    UpdatePreviewLayout((float)ActiveTexture.width / ActiveTexture.height);
+                    if (cameraWidth > requestedWidth || cameraHeight > requestedHeight)
+                    {
+                        Debug.LogWarning(
+                            $"Webcam device ignored the requested mode and captures at " +
+                            $"{cameraWidth}x{cameraHeight}; every frame uploads " +
+                            $"{cameraWidth * cameraHeight * 4 / 1024 / 1024} MB of texture data.");
+                    }
+
+                    // Only hand a valid frame to the full-screen preview so the UI
+                    // does not render and rebuild with an empty 16x16 texture.
+                    if (preview != null)
+                        preview.texture = ActiveTexture;
+
+                    UpdatePreviewLayout((float)cameraWidth / cameraHeight);
                     LogPreviewRenderState();
                 }
             }

@@ -32,6 +32,14 @@ namespace ARPIANO.Scripts.Tracking
 
         private IEnumerator Start()
         {
+            if (!RuntimeFeatures.OpenCVTrackingEnabled)
+            {
+                // OpenCV tracking is switched off in code: no frame readback,
+                // no detection and no debug visualizations are performed.
+                enabled = false;
+                yield break;
+            }
+
             int finalBlackKeyCount = 0;
             int finalWhiteLineCount = 0;
             string finalPattern = "FAILED";
