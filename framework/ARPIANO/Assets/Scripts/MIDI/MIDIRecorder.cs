@@ -375,8 +375,7 @@ namespace ARPIANO.Scripts.MIDI
 
         private string GetRecordingsDirectory()
         {
-            string projectDirectory = Directory.GetParent(Application.dataPath).FullName;
-            return Path.Combine(projectDirectory, "Recordings");
+            return Path.Combine(Application.persistentDataPath, "Recordings");
         }
 
         private static string QuoteArgument(string value)
@@ -673,11 +672,7 @@ namespace ARPIANO.Scripts.MIDI
                     previousTicks = absoluteTicks;
                 }
 
-                string projectDirectory =
-                    Directory.GetParent(Application.dataPath).FullName;
-
-                string recordingsDirectory =
-                    Path.Combine(projectDirectory, "Recordings");
+                string recordingsDirectory = GetRecordingsDirectory();
 
                 Directory.CreateDirectory(recordingsDirectory);
 

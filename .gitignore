@@ -24,3 +24,26 @@
 /framework/ARPIANO/*.csproj
 /framework/ARPIANO/*.user
 /framework/ARPIANO/*.suo
+
+# Unity generated files
+/framework/ARPIANO/MemoryCaptures/
+/framework/ARPIANO/Recordings/
+/framework/ARPIANO/UserSettings/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+.vscode/
+*.sln
+*.csproj
+*.user
+*.suo
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak

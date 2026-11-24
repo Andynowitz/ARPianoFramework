@@ -1,311 +1,316 @@
 # ARPianoFramework
 
-## COMMITING
+ARPianoFramework is a modular and extensible piano-instruction framework built with **Unity 6** and **C#**. It combines MIDI lesson playback, live MIDI input, piano-note visualization, webcam-based keyboard alignment, and session recording in a single prototype.
 
-```bash
-git push origin andy/setup
-git push github andy/setup
+The project is intended as a research and development platform for immersive piano instruction. Its current workflow is designed for desktop use, while the architecture leaves room for future mixed-reality and head-mounted-display integration.
 
-git push -u origin ffmpeg-fix
-git push -u github ffmpeg-fix
-```
+## Features
 
-## Overview
-
-ARPianoFramework is a modular and extensible framework for Mixed Reality (MR) piano instruction developed with Unity 6 and C#.
-
-The project consolidates piano visualization, MIDI lesson playback, keyboard tracking, and recording into a common framework. It is intended as a research and development platform for immersive piano instruction across desktop and future head-mounted display (HMD) environments.
-
-The framework currently includes MIDI lesson parsing and playback, an 88-key virtual piano, animated note beams, manual keyboard calibration using virtual UI points, and recording of MIDI input and screen video with optional synthesized piano audio.
-
-The architecture is designed to support interchangeable modules for lesson authoring, visualization, display, and tracking.
+- **MIDI lessons:** Load MIDI lesson files and represent their notes, timing, and duration in the framework's lesson model.
+- **Lesson playback:** Play lessons, pause and resume playback, and coordinate note events with the visualization.
+- **Live MIDI input:** Receive notes from a connected USB MIDI keyboard.
+- **Virtual piano:** Display an 88-key virtual keyboard and map MIDI notes to piano keys.
+- **Note visualization:** Display animated beams that correspond to lesson notes or live MIDI input.
+- **Manual keyboard calibration:** Use four draggable points to mark the physical keyboard's corners in the webcam image. Calibration data is saved locally and restored in later sessions.
+- **Recording:** Save MIDI input and screen video. The framework can also render piano audio from the recorded MIDI and combine that audio with the video.
+- **Experimental computer vision:** An OpenCV/OpenCvSharp keyboard-detection implementation is included for experimentation. Manual calibration is the current primary workflow.
 
 ## Technologies
 
-### Core framework
-- Unity 6
-- C# / .NET
-- Git
+| Area | Technologies |
+|---|---|
+| Engine and language | Unity 6, C#, .NET |
+| MIDI | DryWetMIDI, USB MIDI input |
+| Interface and visualization | Unity UI, TextMeshPro, `RectTransform` |
+| Camera | `WebCamTexture` |
+| Experimental tracking | OpenCV, OpenCvSharp |
+| MIDI audio rendering | FluidSynth, FluidR3 GM SoundFont |
+| Media processing | FFmpeg, FFmpegUnityBind2 |
+| Version control | Git |
 
-### MIDI and lesson processing
-- DryWetMIDI — MIDI file parsing, note events, and MIDI file generation
-- USB MIDI keyboard input
-- Internal `PianoNote` and `Lesson` models
-- Event-driven note playback and visualization
+## Repository layout
 
-### Visualization
-- Unity UI and `RectTransform`
-- Virtual 88-key piano
-- Animated note beams
-- Configurable beam movement and note-duration visualization
+The Unity project is located inside the repository at:
 
-### Keyboard tracking and calibration
-- Webcam input
-- Manual calibration using four virtual UI points
-- Conversion between UI positions and camera/image coordinates
-- Keyboard corner mapping for the virtual piano
-- OpenCV / OpenCvSharp — earlier experimental keyboard-detection approach; not the current primary strategy and not yet considered reliable
+```text
+ARPianoFramework/
+└── framework/
+    └── ARPIANO/
+        ├── Assets/
+        ├── Packages/
+        └── ProjectSettings/
+```
 
-### Recording and audio
-- MIDI recording to Standard MIDI Files (`.mid`)
-- Screen recording to MP4
-- FluidSynth — offline rendering of MIDI into WAV audio
-- FluidR3 GM SoundFont — General MIDI instrument sounds
-- FFmpeg / FFmpegUnityBind2 — media processing and combining rendered piano audio with recorded video
+Open **`framework/ARPIANO`** as the Unity project directory. Do not open the repository root as the Unity project.
 
-### Planned technologies
-- Meta XR SDK
-- HMD deployment and mixed-reality display integration
-- Additional tracking and display modules as required
+## Developer setup: clone and open the Unity project
 
-## Planned Architecture
+### Requirements
 
-![Architecture Mockup](documentation/images/ArchicetcureMockup.png)
+- Windows 10 or Windows 11, 64-bit.
+- Git.
+- Unity Hub.
+- **Unity Editor 6000.4.6f1**.
+- Unity's Windows Build Support module if you intend to create a Windows standalone build.
+- An internet connection for the initial Unity package restore.
+- A webcam and MIDI input device for testing the corresponding features.
 
-The framework is designed to be modular. Every major component should be replaceable without unnecessarily affecting the remaining system.
+Use the Unity Editor version recorded in `ProjectSettings/ProjectVersion.txt`. A different Unity version may upgrade project files or packages.
 
-The main logical components are:
+### 1. Clone the repository
+
+Clone the repository using the URL provided by the Git hosting service:
+
+```bash
+git clone <repository-url>
+```
+
+### 2. Open the Unity project
+
+In Unity Hub:
+
+1. Select **Add** or **Add project from disk**.
+2. Browse to the cloned repository.
+3. Select the `framework/ARPIANO` folder.
+4. Open the project with Unity **6000.4.6f1**.
+5. Wait for Unity to import the assets and resolve the packages.
+
+The first import can take some time. Open the scene manually from the Project window:
+
+```text
+Assets/Scenes/SampleScene.unity
+```
+
+Unity does not necessarily open this scene automatically when the project is first added to Unity Hub.
+
+### 3. Install FluidSynth for audio recording
+
+The FluidSynth runtime and SoundFont are distributed separately from the Git repository because they are large third-party dependencies.
+
+1. Open the project's [GitHub Releases](https://github.com/Andynowitz/ARPianoFramework/releases) page.
+2. Download the `FluidSynth-Windows-x64.zip` release asset.
+3. Extract the contents of the ZIP into:
+
+
+```text
+Assets/StreamingAssets/FluidSynth/
+```
+
+After extraction, the folder should contain the runtime files directly (not an additional nested `FluidSynth` folder):
+
+```text
+Assets/StreamingAssets/FluidSynth/
+├── fluidsynth.exe
+├── libfluidsynth-3.dll
+├── SDL3.dll
+├── sndfile.dll
+└── FluidR3_GM.sf2
+```
+
+Keep the filenames expected by the project. If a newer FluidSynth distribution uses different DLL names or dependencies, it may require corresponding configuration changes.
+
+Without this folder, the project can still be opened and other functionality can be used, but MIDI-to-WAV rendering and the piano-audio portion of combined recordings will not work. Video recording and MIDI file saving are separate functions.
+
+### 4. FFmpeg
+
+The project includes FFmpegUnityBind2 and its Windows desktop runtime archives under `Assets/StreamingAssets`. The integration extracts the required runtime files when needed. A separately installed FFmpeg executable should not normally be necessary for the tested Windows workflow.
+
+Do not remove or rename the committed FFmpeg runtime archives.
+
+### 5. Windows x64 MIDI plugin import setting
+
+The native DryWetMIDI plugin must be included in Windows x64 standalone builds.
+
+In the Unity Project window, locate:
+
+```text
+Melanchall_DryWetMidi_Native64.dll
+```
+
+Select the DLL and inspect its Plugin Import Settings. The tested configuration is:
+
+- **Any Platform:** disabled.
+- **Editor:** enabled for x86_64.
+- **Standalone:** enabled for x86_64.
+- **Windows x86:** disabled.
+
+The plugin's `.meta` file stores its import settings. Ensure the updated `.meta` file is committed to Git so that a fresh clone receives the same configuration. If the setting is missing after cloning, apply it in the Inspector and commit the resulting `.meta` change.
+
+### 6. Build the Windows application
+
+1. Open **File → Build Profiles**.
+2. Select the Windows platform.
+3. Confirm that `Assets/Scenes/SampleScene.unity` is included and enabled in the Scene List.
+4. Select the required architecture, normally Windows x86_64.
+5. Choose a build output folder outside the Unity project if desired.
+6. Build and wait for Unity to finish.
+
+A Unity standalone build consists of the executable and its accompanying data and runtime files. Distribute the **entire build output**, not only the `.exe`.
+
+## End-user setup: run the Windows application
+
+This guide is for someone who wants to use the compiled application without opening the Unity project.
+
+### Requirements
+
+- Windows 10 or Windows 11, 64-bit.
+- A webcam.
+- A USB MIDI keyboard or another supported MIDI input device.
+- The complete Windows build folder supplied with the application.
+
+### 1. Extract the application
+
+Download or receive the Windows build archive and extract the **entire folder** to a location where the user has permission to write files, for example:
+
+```text
+C:\Users\<username>\Applications\ARPianoFramework\
+```
+
+Do not move the `.exe` out of its build folder or distribute the executable on its own.
+
+### 2. Connect the devices
+
+1. Connect the webcam.
+2. Connect and power on the MIDI keyboard.
+3. Close other applications that may be using the MIDI input device.
+4. Start ARPianoFramework.
+
+The current implementation selects the first available webcam and MIDI input device. If several devices are connected, the application may select a different device than expected.
+
+### 3. Open the framework
+
+Run `ARPIANO.exe` (or the executable name supplied with the build). Allow Windows to access the webcam if a permission prompt appears. If the camera feed is unavailable, check that Windows recognizes the camera and that another application is not using it.
+
+### 4. Calibrate the physical keyboard
+
+The primary calibration method is manual:
+
+1. Open the calibration interface.
+2. Make sure the webcam image is visible.
+3. Move the four calibration points onto the physical keyboard's corners:
+   - top-left,
+   - top-right,
+   - bottom-right,
+   - bottom-left.
+4. Confirm the calibration.
+5. Check that the virtual keyboard and note-position markers align with the physical keys.
+6. Use **Calibrate Again** if the camera or piano is moved.
+
+Calibration is stored locally and restored in later sessions. A calibration made on one computer should not be assumed to match another computer's camera placement or physical piano setup. Recalibrate after changing the camera position, camera, or piano position.
+
+### 5. Load and play a lesson
+
+Select one of the available MIDI lessons in the lesson interface and start playback. The lesson files supplied with the project are stored in:
+
+```text
+Assets/StreamingAssets/Lessons/
+```
+
+Additional MIDI lesson files can be placed in the lesson folder if the application is configured to read them from its StreamingAssets directory.
+
+### 6. Record a session
+
+Use the recording interface to start and stop a session. Depending on the selected recording mode, the framework can save:
+
+- a Standard MIDI File (`.mid`);
+- a screen recording (`.mp4`);
+- a combined MP4 containing the screen recording and piano audio rendered from the MIDI performance.
+
+The combined audio/video workflow requires the FluidSynth runtime and FluidR3 GM SoundFont to be present in the build's StreamingAssets folder. When preparing a distributable build, include the `FluidSynth` folder at:
+
+```text
+<BuildName>_Data/StreamingAssets/FluidSynth/
+```
+
+Preserve the complete Unity build folder structure. If the FluidSynth folder is omitted, the application can report that the runtime or SoundFont is missing and the piano-audio rendering step will fail.
+
+Recording output is written to the application's persistent data directory rather than the installation directory. On Windows, this is normally under:
+
+```text
+%USERPROFILE%\AppData\LocalLow\<CompanyName>\<ProductName>\Recordings\
+```
+
+The exact company and product folder names depend on the Unity Player Settings used for the build. Users do not need write permission inside `Program Files` for recordings to be saved.
+
+## Recording workflow
+
+The combined MIDI and video recording process is:
+
+1. Capture MIDI note events and their timing.
+2. Save the events as a Standard MIDI File.
+3. Finish encoding the screen recording.
+4. Use FluidSynth to render the MIDI file into temporary WAV audio.
+5. Use FFmpeg to combine the rendered piano audio with the recorded video.
+6. Save the final MP4.
+
+The piano audio is synthesized from the recorded MIDI events; it is not captured from a physical piano microphone.
+
+| Recording mode | Output |
+|---|---|
+| MIDI only | `.mid` |
+| Video only | `.mp4` without generated piano audio |
+| MIDI and video | `.mid` and `.mp4` with synthesized piano audio |
+
+## Keyboard calibration
+
+The current primary calibration workflow uses four manually positioned points in the webcam image. The positions are converted from UI coordinates into camera/image coordinates and used to establish the keyboard mapping for the virtual piano and note visualization.
+
+The calibration is stored locally and restored in later sessions. Because the calibration describes a particular camera and physical piano arrangement, each new computer or changed camera setup should be calibrated independently.
+
+The OpenCV/OpenCvSharp keyboard-detection implementation is experimental. It is not the primary calibration workflow and should not be relied on as a fully validated automatic calibration method.
+
+## Known limitations
+
+- The current supported and tested deployment target is Windows x64.
+- The webcam and MIDI input implementations select the first available device; device selection is not currently presented as a configurable setup workflow.
+- Manual calibration is the primary supported keyboard-alignment method.
+- OpenCV-based automatic keyboard detection is experimental.
+- FluidSynth and the FluidR3 GM SoundFont are distributed separately from the Git repository. Download the Windows x64 archive from the [GitHub Releases](https://github.com/Andynowitz/ARPianoFramework/releases) page and extract it into the expected location.
+- The project has been opened and tested from a fresh Git clone and a Windows standalone build on the development computer. A separate physical-PC test has not yet been performed.
+- Meta Quest deployment and the complete mixed-reality workflow are future work.
+
+## Third-party software and licences
+
+This project uses third-party software, packages, native libraries, and audio assets. Their licences are separate from any licence that may apply to ARPianoFramework.
+
+See [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) for the project's licence inventory and attribution notes.
+
+Important dependencies include:
+
+- **DryWetMIDI** — MIDI file processing and MIDI input/output functionality.
+- **FluidSynth** — MIDI synthesis and WAV rendering.
+- **FluidR3 GM SoundFont** — General MIDI instrument samples.
+- **FFmpeg** — audio/video processing.
+- **FFmpegUnityBind2** — Unity integration for FFmpeg.
+- **OpenCvSharp / OpenCV** — experimental computer-vision functionality.
+- **Unity and Unity packages** — subject to Unity's and the respective package authors' terms.
+
+Before redistributing a project or standalone build, verify the exact versions, bundled binaries, licence texts, attribution requirements, and redistribution permissions for every dependency. In particular, verify the terms for the FFmpeg build and the FluidR3 GM SoundFont before distributing them.
+
+## Architecture
+
+The framework is organized around several logical responsibilities:
 
 - **Lesson system:** Loads MIDI lessons and represents notes using internal models.
 - **Lesson playback:** Tracks playback time and emits note-start and note-stop events.
-- **Virtual piano:** Maps MIDI notes to the corresponding keys and displays their active state.
-- **Visualization:** Represents notes as animated beams that move toward their target piano keys.
+- **Virtual piano:** Maps MIDI notes to piano keys and displays their active state.
+- **Visualization:** Represents notes as animated beams moving toward their target keys.
 - **Keyboard tracking and calibration:** Establishes the keyboard's position in the camera image using manually positioned UI points.
-- **Recording:** Captures MIDI input and video, optionally rendering the recorded MIDI into piano audio and combining it with the video.
+- **Recording:** Captures MIDI input and video, optionally rendering MIDI audio and combining it with the video.
 
-These components form the intended architecture. Further work is required to make all modules independently replaceable and validate the complete mixed-reality pipeline.
+The architecture uses interfaces and event-driven communication to reduce dependencies between components. Further work is needed before every module can be replaced independently.
 
-## Development Workflow
+![Architecture mockup](documentation/images/ArchicetcureMockup.png)
 
-Development proceeds incrementally. Each milestone should produce a working prototype before additional functionality is introduced.
+## Future development
 
-# Milestone 1 – Project Foundation
+Potential future work includes:
 
-- [x] Create Unity project
-- [x] Design folder structure
-- [x] Define initial interfaces
-- [x] Create core models (`PianoNote`, `Lesson`)
-- [x] Set up Git repository
-- [x] Establish the initial modular project architecture
-
-# Milestone 2 – MIDI & Lesson System
-
-- [x] Integrate DryWetMIDI
-- [x] Parse MIDI files
-- [x] Convert MIDI notes into `PianoNote`
-- [x] Create `Lesson` objects
-- [x] Print parsed notes for debugging
-- [x] Represent MIDI note pitch, timing, and duration in the internal lesson model
-
-# Milestone 3 – Lesson Playback
-
-- [x] Create `LessonPlayer`
-- [x] Implement an internal playback timer
-- [x] Trigger `NoteStarted`
-- [x] Trigger `NoteStopped`
-- [x] Implement pause and resume
-- [x] Implement stop playback
-- [x] Expose note events for visualization and other subscribers
-
-# Milestone 4 – Virtual Piano
-
-- [x] Create an 88-key virtual keyboard
-- [x] Create the `PianoKey` component
-- [x] Map MIDI notes 21–108 to piano keys
-- [x] Connect the virtual piano to lesson playback
-- [x] Highlight pressed keys
-- [x] Release highlighted keys when notes stop
-
-# Milestone 5 – Note Visualization
-
-- [x] Create the initial beam visualizer prototype
-- [x] Spawn beams in response to note-start events
-- [x] Handle note-stop events
-- [x] Support simultaneous notes and chords
-- [x] Implement beam movement toward target piano keys
-- [x] Establish the beam coordinate system
-- [x] Align beam endpoints with the target keys
-- [x] Synchronize visualization with lesson playback
-- [x] Represent note duration through beam animation
-- [x] Implement configurable beam movement
-- [x] Implement beam fading after note completion
-- [x] Verify the main beam animation behavior
-
-# Milestone 6 – Piano Tracking and Calibration
-
-## Phase 1 – Static Image and Manual Alignment
-
-- [x] Display a static piano image
-- [x] Overlay the virtual piano
-- [x] Manually align the virtual keyboard with the piano image
-
-## Phase 2 – Webcam Integration
-
-- [x] Integrate webcam image input into the calibration workflow
-- [x] Display the webcam feed
-- [x] Replace the static image input with webcam frames
-- [x] Implement the webcam-based calibration workflow
-- [x] Establish the camera/image coordinate mapping
-- [ ] Validate calibration across different camera resolutions and aspect ratios
-- [ ] Validate camera orientation and image mirroring across supported setups
-- [ ] Complete end-to-end validation with different physical pianos
-
-## Phase 3 – Manual Keyboard Calibration Using Virtual UI Points
-
-The current calibration strategy uses four manually positioned UI points to represent the corners of the physical piano keyboard in the camera image.
-
-This approach replaces automatic keyboard-corner detection as the primary calibration strategy. The user positions the points directly over the piano's corners and confirms the calibration.
-
-- [x] Display four calibration points
-- [x] Allow manual positioning of the points
-- [x] Represent the four keyboard corners: top-left, top-right, bottom-right, and bottom-left
-- [x] Convert UI positions into camera/image coordinates
-- [x] Use the calibrated corners for keyboard-position mapping
-- [x] Connect calibration data to the virtual piano and visualization mapping
-- [x] Implement a recalibration workflow
-- [ ] Validate calibration under different camera positions and viewing angles
-- [ ] Validate mapping accuracy across resolutions and aspect ratios
-- [ ] Validate all beam endpoints against physical piano keys
-- [ ] Verify calibration persistence across Play mode sessions and application restarts
-- [ ] Verify that restoring calibration keeps UI points, the calibration model, virtual piano, and beam mapping synchronized
-
-## Phase 4 – Experimental Automatic Keyboard Detection (OpenCV)
-
-OpenCV/OpenCvSharp was integrated and used experimentally to detect keyboard contours and estimate corner positions. The approach is not the current primary calibration strategy and has not been validated as sufficiently reliable for the intended workflow.
-
-- [x] Integrate OpenCvSharp
-- [x] Implement experimental keyboard contour detection
-- [x] Implement experimental corner estimation and ordering
-- [x] Implement an initial corner-based virtual keyboard alignment approach
-- [ ] Diagnose and improve detection reliability
-- [ ] Validate detection across additional images
-- [ ] Test robustness against rotation, scaling, lighting, and perspective changes
-- [ ] Test detection with partial keyboard visibility
-- [ ] Decide whether automatic detection should be retained or replaced by another approach
-
-# Milestone 7 – MIDI Input and Recording
-
-## Phase 1 – MIDI Recording
-
-- [x] Capture MIDI note input
-- [x] Record note events and timing
-- [x] Save recordings as Standard MIDI Files (`.mid`)
-- [x] Validate the saved MIDI notes and timing
-
-## Phase 2 – Screen Video Recording
-
-- [x] Integrate the screen/video recording workflow
-- [x] Save screen recordings as MP4
-- [x] Support video-only recording
-- [x] Keep generated piano audio disabled in video-only mode
-
-## Phase 3 – Piano Audio Rendering and Combined Recording
-
-- [x] Integrate FluidSynth for offline MIDI rendering
-- [x] Use the FluidR3 GM SoundFont for piano instrument audio
-- [x] Render recorded MIDI to temporary WAV audio
-- [x] Integrate FFmpeg-based audio/video processing
-- [x] Combine rendered piano audio with the recorded video
-- [x] Verify that the piano audio matches the recorded notes
-- [x] Verify synchronization between piano audio and video
-- [x] Support MIDI-only recording without video
-- [x] Support combined MIDI and video recording with piano audio
-- [ ] Improve error handling for failed audio rendering or media processing
-- [ ] Verify cleanup of temporary audio and video files after successful and failed saves
-- [ ] Validate the workflow in a standalone Windows build
-- [ ] Evaluate audio-rendering support on other platforms
-
-# Milestone 8 – Framework Modularity
-
-- [x] Establish initial interfaces and core models
-- [x] Use note events to connect playback and visualization
-- [ ] Create interchangeable tracker modules
-- [ ] Create interchangeable visualizer modules
-- [ ] Standardize event-driven communication between modules
-- [ ] Further separate lesson, tracking, visualization, and recording responsibilities
-- [ ] Remove unnecessary dependencies between components
-- [ ] Document component interfaces and data flow
-- [ ] Validate that modules can be replaced independently
-
-# Milestone 9 – Mixed Reality
-
-- [ ] Integrate Meta XR SDK
-- [ ] Deploy the framework to Meta Quest
-- [ ] Verify display abstraction
-- [ ] Validate keyboard calibration in the headset
-- [ ] Test visualization from the intended mixed-reality camera perspective
-- [ ] Test the complete mixed-reality pipeline
-- [ ] Investigate synchronized virtual hands and hand tracking
-
-## Recording Output
-
-Recordings are stored in the Unity project's `Recordings` directory. The exact output subdirectories depend on the recording component's configuration.
-
-The supported recording modes are:
-
-| Mode | Output | Piano audio |
-|---|---|---|
-| MIDI only | `.mid` | Not applicable |
-| Video only | `.mp4` | No generated piano audio |
-| MIDI + video | `.mid` and `.mp4` | Rendered piano audio included in the MP4 |
-
-### Combined MIDI and video workflow
-
-1. Record MIDI note events and their timing.
-2. Save the recorded events to a Standard MIDI File.
-3. Finish encoding the screen recording.
-4. Use FluidSynth to render the MIDI file into temporary WAV audio.
-5. Use FFmpeg to combine the recorded video and rendered piano audio.
-6. Save the resulting MP4 and clean up temporary files.
-
-The audio is rendered from the recorded MIDI rather than captured from a physical piano microphone. This ensures that the exported piano sound corresponds to the recorded MIDI events.
-
-FluidSynth is currently integrated through its Windows executable and bundled runtime files. Other platforms have not yet been verified.
-
-## Keyboard Calibration Workflow
-
-The current primary calibration workflow is manual and image-based:
-
-1. Display the webcam image.
-2. Position the four UI calibration points over the physical piano's keyboard corners.
-3. Convert the UI positions into the camera/image coordinate system.
-4. Create or update the calibration model using the four corners.
-5. Use the calibrated coordinates to align the virtual piano and map note positions.
-6. Recalibrate when the camera or piano position changes.
-
-The calibration points and the calibration model must remain consistent. Restoring saved positions must not only move the visible UI points; it must also restore the corresponding camera/image coordinates and initialize the systems that depend on the calibration.
-
-Automatic OpenCV-based corner detection remains experimental and is not the primary strategy.
-
-## Third-Party Licenses
-
-This project uses third-party software and audio assets. The licences of these components are separate from the licence of ARPianoFramework.
-
-See [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) for the current licence inventory and attribution notes.
-
-Important components include:
-
-- **DryWetMIDI:** MIDI file processing.
-- **FluidSynth:** MIDI synthesis and WAV rendering.
-- **FluidR3 GM SoundFont:** General MIDI instrument samples; the original README states that Fluid is released under the MIT License.
-- **FFmpeg:** Video and audio processing. The applicable licence depends on the exact build configuration.
-- **FFmpegUnityBind2:** Unity integration for FFmpeg.
-- **OpenCvSharp / OpenCV:** Experimental computer-vision implementation.
-- **Unity and Unity packages:** Subject to their respective terms and licences.
-
-Before redistributing the project, verify the exact versions, bundled native binaries, licence texts, attribution requirements, and any additional dependencies.
-
-The FluidR3 GM SoundFont is large and should not be committed to ordinary Git history if doing so would exceed the hosting platform's file-size limits. Use an appropriate external download or release asset if redistribution is permitted.
-
-## Future Features
-
-- Multiple visualization modes
-- Improved keyboard tracking and calibration
-- Automatic keyboard detection, if a reliable strategy is established
-- Hand tracking and synchronized virtual hands
-- Automatic sheet music generation
-- Additional lesson formats
-- Advanced perspective correction and camera pose estimation
-- Improved recording error recovery
-- Cross-platform audio rendering
-- Mixed-reality deployment and interaction
+- Meta XR SDK integration and Meta Quest deployment.
+- Mixed-reality display and interaction.
+- Synchronized virtual hands and hand tracking.
+- Additional lesson formats and lesson-authoring tools.
+- Further separation and interchangeability of tracking and visualization modules.
+- More robust automatic keyboard detection, if a reliable approach can be established.
+- Improved recording error recovery and temporary-file cleanup.
+- Cross-platform audio rendering and deployment.
